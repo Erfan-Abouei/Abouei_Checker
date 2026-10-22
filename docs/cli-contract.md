@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 2; `version`, `init`, `validate`, root help, and global flags implemented |
+| Status | Phase 3; `version`, `init`, `validate`, `check`, and `monitor` implemented; root help and global flags implemented |
 | Executable | `abouei-checker` |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md) |
 
@@ -17,8 +17,8 @@ not be advertised as usable.
 | `version` | Implemented | Print build metadata |
 | `init` | Implemented | Write a commented configuration template |
 | `validate` | Implemented | Load, resolve, and validate configuration without network or database access |
-| `check` | Planned | Probe each selected backend once, persist state, attempt due notifications, and exit |
-| `monitor` | Planned | Continuously schedule probes and notifications until graceful shutdown |
+| `check` | Implemented (Phase 3, in-memory) | Probe each selected backend once and exit; no SQLite, no incidents, no notifications |
+| `monitor` | Implemented (Phase 3, in-memory) | Continuously schedule probes with per-backend intervals until graceful shutdown; no SQLite, no incidents, no notifications |
 | `status` | Planned | Read current backend and incident state from SQLite |
 | `history` | Planned | Read observations and incident transitions from SQLite |
 | root/help | Implemented | Show command help |
@@ -116,57 +116,57 @@ abouei-checker validate [--output text|json]
   stable `code` and safe `details`, and stderr contains exactly one `Error:`
   line.
 
-### 3.4 `check` (planned)
+### 3.4 `check` (implemented in Phase 3 without persistence)
 
 ```text
 abouei-checker check [BACKEND_ID...] [--config PATH] [--output text|json]
 ```
 
 - Performs one probe per selected backend. With no IDs, checks all configured
-  backends. An unknown ID is a usage error (exit `2`).
-- Opens and migrates SQLite, restores backend threshold state and open incidents,
-  probes concurrently under `runtime.max_concurrent_probes`, and persists each
-  result in a transaction.
-- Applies the same incident and reminder policy as `monitor`. It is not a
-  long-running scheduler: any future reminders are scheduled for the next
-  invocation or a running monitor.
-- Attempts due notification events once after the probes. Failed attempts remain
-  durable for later retry; the command does not wait through the full retry
-  backoff schedule.
-- Exit `1` if any selected backend's probe fails in this invocation, even if the
-  configured failure threshold has not yet opened an incident.
-- Exit `4` if a required notification attempt fails, taking precedence over `1`.
-- Output includes per-backend health results and a summary. Incident state changes
-  are reflected in the summary and in `status`/`history`.
+  backends. An unknown ID is a usage error (exit `2`); no request is performed
+  in that case.
+- Probes concurrently under `runtime.max_concurrent_probes` in deterministic
+  configuration order. One backend's timeout or failure never blocks the others.
+- Tracks consecutive-failure streaks in memory only. It opens no SQLite
+  database, persists no observations or threshold state, creates no incidents,
+  and delivers no notifications. Reported `incidents_opened`,
+  `incidents_closed`, `notifications_attempted`, and `notifications_failed`
+  are therefore always `0`, and per-result `incident_status` is always `"none"`.
+- Exit `1` if any selected backend's probe fails (unhealthy or error outcome)
+  in this invocation, even if the configured failure threshold has not been
+  reached. Exit `4` does not apply in this phase because no notifications are
+  attempted.
+- Output includes per-backend health results and a summary. Streak fields
+  (`consecutive_failures`, `failure_threshold`, `threshold_reached`) reflect
+  this invocation's in-memory state only and do not survive process restart.
 
 One-shot `check` is suitable for cron and CI, but it does not provide continuous
 scheduling or reminders while it is not running.
 
-### 3.5 `monitor` (planned)
+### 3.5 `monitor` (implemented in Phase 3 without persistence)
 
 ```text
 abouei-checker monitor [--config PATH] [--output text|json]
 ```
 
 - Runs continuously with one schedule per configured backend.
-- On startup: loads config, opens/migrates SQLite, restores state, immediately
-  probes all configured backends, reconciles open incidents, and starts the
-  notification worker.
+- On startup: loads config, immediately probes all configured backends, then
+  ticks each backend on its own interval. No SQLite is opened, no state is
+  restored, and no notification worker starts.
 - Never runs overlapping probes for the same backend. Independent backends run
   concurrently under the global limit.
-- Delivers Down, Recovery, and reminder notifications according to policy, with
-  durable retries.
+- Delivers no notifications in this phase; reminder policy is not evaluated.
 - On the first SIGINT/SIGTERM: stops scheduling, cancels in-flight contexts,
-  waits up to `runtime.shutdown_timeout` for cleanup, closes SQLite, and exits
-  `0`. Pending notification events survive for the next start.
+  waits up to `runtime.shutdown_timeout` for cleanup, and exits
+  `0`. Threshold streaks are discarded with the process.
 - A second signal after the shutdown timeout forces termination and uses the
   conventional Unix `128+signal` status (`130` for SIGINT, `143` for SIGTERM).
   Windows signal behavior follows the host platform.
 - Unhealthy backends do not terminate `monitor` and do not produce exit `1`.
-  Notification failure does not terminate it; it is retried and logged.
-- Fatal startup, database, or scheduler failures exit `3`.
+- Fatal startup or scheduler failures exit `3`.
 - JSON mode streams newline-delimited envelopes (one compact JSON object per
-  line). Human mode prints readable lifecycle events.
+  line) with `data.kind` of `started`, `probe`, or `shutdown`. Human mode
+  prints readable lifecycle events.
 
 ### 3.6 `status` (planned)
 
@@ -295,7 +295,7 @@ Error object:
   `notification_failed`, `internal`. New codes may be added; existing meanings
   do not change within schema version 1.
 
-### 6.2 Command data shapes (planned unless noted)
+### 6.2 Command data shapes (`status`/`history` planned unless noted)
 
 `version` (implemented):
 
@@ -431,8 +431,9 @@ the same top-level fields. `data.kind` identifies the event, for example:
 {"schema_version":"1","command":"monitor","generated_at":"2026-10-22T12:00:01Z","status":"unhealthy","data":{"kind":"probe","backend_id":"api","healthy":false,"http_status":503,"duration_ms":42,"failure_reason":"status_mismatch"},"error":null}
 ```
 
-The event vocabulary is finalized in Phase 3/4 and must be documented before
-implementation. New `kind` values may be added without changing the envelope.
+The Phase 3 event vocabulary is `started`, `probe`, and `shutdown`. New `kind`
+values may be added without changing the envelope; notification-related kinds
+arrive with Phase 4.
 
 ### 6.4 Output discipline
 
@@ -477,15 +478,14 @@ implementation. New `kind` values may be added without changing the envelope.
 
 ## 9. Current Implementation Limitations
 
-Phase 2 implements root/help, `version`, `init`, `validate`, the global
-`--config`, `--log-level`, and `--output` flags, strict version-1 YAML loading,
-environment expansion, validation, defaults/inheritance, secret registration,
-the shared logging foundation, and centralized error mapping.
+Phase 3 implements `check`, `monitor`, the `internal/probe` engine, and the
+`internal/monitor` scheduler and streak tracker on top of the Phase 2
+foundation. `check` and `monitor` keep threshold streaks in memory only.
 
-The operational commands `check`, `monitor`, `status`, and `history` remain
-planned. No SQLite store, probe engine, scheduler, incident state machine,
-webhook delivery, or retention job exists yet. Configuration fields that belong
-to those phases are validated but have no runtime effect.
+The operational commands `status` and `history` remain planned. No SQLite
+store, incident state machine, webhook delivery, or retention job exists yet.
+`check`/`monitor` therefore report no incidents and attempt no notifications;
+full incident and notification behavior arrives in Phase 4.
 
 The roadmap mentions a possible `--version` convenience flag. The CLI contract
 defines the `version` command as the build-metadata interface, so it does not add

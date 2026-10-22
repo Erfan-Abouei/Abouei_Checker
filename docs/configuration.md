@@ -527,7 +527,10 @@ Phase 2 implements the complete loader in `internal/config`:
 - `init` template generation in `internal/config` and `internal/cli`;
 - `validate` with text and JSON output and no network or database access.
 
-The monitoring fields are accepted and validated, but they have no runtime
-effect until their owning phases: probing and scheduling (Phase 3), incidents,
-persistence, and webhook delivery (Phases 4–5). No SQLite database is opened by
+The monitoring policy fields (`interval`, `timeout`, `failure_threshold`,
+`max_response_bytes`, `follow_redirects`, `accepted_status_codes`,
+`body_match`) are consumed by the Phase 3 probe engine and scheduler for
+one-shot `check` and continuous `monitor`, with failure streaks kept in memory
+only. Incident state, persistence, and webhook delivery remain Phase 4–5 work.
+No SQLite database is opened by
 this phase.
