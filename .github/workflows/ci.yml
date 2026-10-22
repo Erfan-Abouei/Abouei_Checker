@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting and vet
+        run: make fmt-check vet
+
+      - name: Run race tests with coverage
+        run: make test-race cover-check
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+      - name: Scan source and dependencies for vulnerabilities
+        run: govulncheck ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          args: --timeout=5m
+
+  build:
+    name: Cross-platform build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compile declared target matrix
+        env:
+          VERSION: 0.0.0-ci
+          COMMIT: ${{ github.sha }}
+        run: |
+          export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          make cross-build
+
+      - name: Inspect build artifacts
+        run: |
+          ls -lh dist/
+          file dist/*
+
+  container:
+    name: Container smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build container image
+        env:
+          VERSION: 0.0.0-ci
+          COMMIT: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg VERSION="$VERSION" \
+            --build-arg COMMIT="$COMMIT" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t abouei-checker:ci .
+
+      - name: Run version command
+        run: |
+          docker run --rm abouei-checker:ci version
+          docker run --rm abouei-checker:ci version --output json | jq -e '.status == "success"'
+
+      - name: Verify non-root runtime configuration
+        run: |
+          test "$(docker image inspect -f '{{.Config.User}}' abouei-checker:ci)" = "65532:65532"
+          test "$(docker image inspect -f '{{json .Config.Entrypoint}}' abouei-checker:ci)" = '["/usr/local/bin/abouei-checker"]'

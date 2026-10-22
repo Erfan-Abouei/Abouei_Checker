@@ -1,0 +1,18 @@
+# Local build outputs and verification artifacts.
+/bin/
+/dist/
+/coverage.out
+*.prof
+
+# Local configuration and data can contain secrets or runtime history.
+/abouei.yaml
+/.env
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+.DS_Store
