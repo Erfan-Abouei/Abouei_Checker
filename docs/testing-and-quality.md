@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 1 shared-foundation tests implemented; later feature suites planned |
+| Status | Phase 2 configuration tests implemented; later feature suites planned |
 | Go toolchain | 1.27.3 |
 | Related | [Architecture](architecture.md), [Release checklist](release-checklist.md), [Security](security.md) |
 
@@ -78,9 +78,10 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
 | CLI global foundation | `--config`, `--log-level`, `--output`, flag inheritance/defaults, help, stdout/stderr, safe error rendering | In-process command execution with injected writers and app factory | 1 (done) |
 | Logging and redaction | Four levels, text/JSON handlers, UTC timestamps, stable fields, registered secrets, credential-shaped strings, error paths, concurrent use | Injected buffers and redactor tests | 1 (done) |
 | Error model | Categories, stable codes, safe messages, wrapped causes, central exit mapping | Direct unit tests and table-driven mapping | 1 (done) |
-| Configuration discovery | Explicit path, env override, defaults, no fallback, missing file | Temp directories; `t.Setenv` | 2 |
-| Configuration schema | Required fields, unknown fields, duplicate keys, versions, limits, defaults inheritance | Table-driven decode/validate tests | 2 |
-| Secrets | `${NAME}` expansion, embedding, `$$`, missing/empty, redaction in errors/JSON/logs | Unit tests with fake env and captured writers | 2 |
+| Configuration discovery | Explicit path, env override, defaults, no fallback, missing file, symlink rejection | Temp directories; `t.Setenv` | 2 (done) |
+| Configuration schema | Required fields, unknown fields, duplicate keys, versions, limits, defaults inheritance, validation aggregation, init template | Table-driven decode/validate tests | 2 (done) |
+| Secrets | `${NAME}` expansion, embedding, `$$`, missing/empty, malformed references, redaction in errors/JSON/logs | Unit tests with fake env and captured writers | 2 (done) |
+| `init` / `validate` CLI | Safe creation, overwrite refusal, JSON/text output, discovery, no network or database side effects | In-process CLI tests with temp dirs and `httptest` counters | 2 (done) |
 | HTTP probes | Accepted statuses, body contains/regex, timeouts, size limits, malformed responses, redirects, TLS failure | `httptest.Server` and controlled error servers | 3 |
 | Scheduling | No overlapping probes per backend, global concurrency limit, cadence, cancellation | Fake clock/scheduler and atomic counters | 3 |
 | Thresholds | Failure/recovery streaks, threshold of 1, cross-invocation persistence, restart | Pure state tests + temp SQLite | 3/4 |
@@ -132,11 +133,12 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
 
 ## 6. Coverage Policy
 
-- Phase 0/1 floor: **60% overall**, enforced by `scripts/check-coverage.sh`.
-- Phase 1 measured 89.4% overall; the exact command output is in the Phase 1
-  completion report.
+- Phase 2 floor: **70% overall**, enforced by `scripts/check-coverage.sh` and
+  `COVERAGE_MIN` in the Makefile.
+- Phase 1 measured 89.4% overall; Phase 2 measured 91.5% overall (config
+  package 92.8%). Exact command output is in the corresponding completion
+  reports.
 - Ratchet as implementation lands:
-  - Phase 2: at least 70%.
   - Phase 3: at least 75%.
   - Phase 4/5: at least 80%.
   - v1.0.0: at least 80% overall and at least 80% in core packages
@@ -316,3 +318,22 @@ The Phase 1 report records actual local and remote results, including:
 from `vuln.go.dev`. The GitHub CI `Quality and tests` job executed the pinned
 `govulncheck` step successfully, so that gap is closed remotely but is never
 reported as a local pass.
+
+### Phase 2
+
+The Phase 2 report records actual local and remote results, including:
+
+- strict-parsing tests for empty files/documents, multiple documents, wrong root
+  types, unknown fields, duplicate keys, size limits, and wrong field types;
+- discovery precedence, no-fallback, relative-path, permission, and symlink
+  rejection tests;
+- validation tests for versions, IDs, URLs, headers, status codes, body-match
+  RE2 compilation, intervals, timeouts, thresholds, retention, notifications,
+  and cross-field constraints;
+- secret expansion tests for `${NAME}`, embedding, `$$`, missing/empty/malformed
+  references, non-recursive substitution, alias handling, and redaction;
+- CLI tests proving `validate` performs no HTTP request and creates no database,
+  and that `init` refuses overwrite without `--force`;
+- `go test -race`, shuffled race tests, coverage (91.5% overall, 92.8% config),
+  `golangci-lint`, `make check`, `make build`, and `git diff --check`;
+- GitHub Actions CI and CodeQL results on the Phase 2 pull request.

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/buildinfo"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/config"
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/logging"
 )
 
@@ -13,27 +14,42 @@ const (
 	defaultLogFormat = logging.FormatText
 )
 
-// Options are the global application options parsed from CLI flags and, in
-// later phases, configuration. ConfigPath is only recorded in Phase 1; no
-// configuration file is read.
+// Options are the global application options parsed from CLI flags and
+// configuration. ConfigPath is loaded by LoadConfig.
 type Options struct {
+	// ConfigPath is the explicit --config value. Empty selects discovery.
 	ConfigPath string
-	LogLevel   string
-	LogFormat  logging.Format
+	// LogLevel is the --log-level value. When LogLevelSet is false,
+	// configuration logging.level takes precedence unless it is absent.
+	LogLevel string
+	// LogLevelSet reports whether --log-level was supplied explicitly.
+	LogLevelSet bool
+	// LogFormat optionally overrides the configuration log format. The CLI has
+	// no log-format flag, so this is normally empty.
+	LogFormat logging.Format
 	// LogWriter receives all diagnostics. Application logs never go to stdout.
 	LogWriter io.Writer
+	// LookupEnv resolves configuration environment references. Nil uses the
+	// process environment.
+	LookupEnv func(string) (string, bool)
+	// UserConfigDir resolves the platform configuration directory during
+	// discovery. Nil uses os.UserConfigDir.
+	UserConfigDir func() (string, error)
 }
 
 // App is the composition root shared by all commands. It owns global options,
-// the configured logger, and the secret redactor used at logging boundaries.
+// the configured logger, the secret redactor used at logging boundaries, and
+// the loaded configuration.
 type App struct {
 	options  Options
 	logger   *slog.Logger
 	redactor *logging.Redactor
+	config   *config.Config
 }
 
-// New builds the application composition skeleton. It validates global
-// logging options but deliberately does not load configuration.
+// New builds the application composition root. It validates the initial
+// logging options. Configuration is loaded later by LoadConfig for commands
+// that need it, so commands such as version and init never read YAML.
 func New(options Options) (*App, error) {
 	levelName := options.LogLevel
 	if levelName == "" {
@@ -77,8 +93,8 @@ func (a *App) Logger() *slog.Logger {
 	return a.logger
 }
 
-// Redactor returns the redactor used by the logger. Later phases register
-// resolved configuration secrets here.
+// Redactor returns the redactor used by the logger. Resolved configuration
+// secrets are registered with it by LoadConfig.
 func (a *App) Redactor() *logging.Redactor {
 	if a == nil {
 		return logging.NewRedactor()
@@ -86,12 +102,21 @@ func (a *App) Redactor() *logging.Redactor {
 	return a.redactor
 }
 
-// ConfigPath returns the accepted --config path. Phase 1 does not read it.
+// ConfigPath returns the accepted --config path. Use LoadConfig to read it.
 func (a *App) ConfigPath() string {
 	if a == nil {
 		return ""
 	}
 	return a.options.ConfigPath
+}
+
+// Config returns the configuration loaded by LoadConfig, or nil when it has not
+// been loaded. Callers must treat the value as read-only.
+func (a *App) Config() *config.Config {
+	if a == nil {
+		return nil
+	}
+	return a.config
 }
 
 // BuildInfo returns linker-injected build metadata.

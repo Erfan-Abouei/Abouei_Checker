@@ -1,11 +1,15 @@
-# Proposed AboueiChecker configuration for schema version 1.
+# AboueiChecker configuration for schema version 1.
 #
-# This file illustrates the specification in docs/configuration.md.
-# The Phase 0 binary does not load configuration yet.
+# Validate this file with:
+#   abouei-checker validate --config examples/abouei.yaml
 #
-# Secrets are supplied through the environment. Do not put real tokens in this
-# file. Notifications are disabled so this example cannot send alerts by
-# accident.
+# Secrets are supplied through the environment. Set EXAMPLE_API_TOKEN and
+# EXAMPLE_API_KEY before validating the example-api backend. Do not put real
+# tokens in this file.
+#
+# Monitor defaults and fields are validated now, but probing, scheduling,
+# incidents, persistence, and webhook delivery are implemented in later phases.
+# Notifications are disabled so this example cannot send alerts by accident.
 
 version: 1
 

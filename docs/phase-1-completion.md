@@ -10,6 +10,10 @@
 | Pull request | [#1](https://github.com/Erfan-Abouei/Abouei_Checker/pull/1) |
 | Production readiness | Not production-ready; only `version` is operational |
 
+> **Post-report update:** PR #1 was later merged into `develop` at `8ea51b5` as
+> the Phase 2 baseline. The verification evidence below remains the Phase 1
+> record.
+
 This report distinguishes implementation, local verification, and remote
 verification. A remote check is reported only from an observed GitHub run.
 

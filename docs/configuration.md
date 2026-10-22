@@ -2,22 +2,22 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed canonical schema for Phase 2; loader not implemented (Phase 1) |
+| Status | Implemented and frozen for Phase 2 (`validate`, `init`, and loader) |
 | Schema version | `1` |
 | File format | YAML |
-| Related | [Requirements](requirements.md), [Security](security.md), [Persistence](persistence.md) |
+| Related | [Requirements](requirements.md), [Security](security.md), [Persistence](persistence.md), [ADR-0006](decisions/0006-yaml-decoder-and-config-schema.md) |
 
 This is the canonical configuration contract. Other documents reference it
-instead of restating fields. The runtime loader is planned for Phase 2; the
-example below is a specification, not proof that configuration loading works in
-the current Phase 1 foundation.
+instead of restating fields. The loader, validator, `init`, and `validate` are
+implemented in `internal/config` and `internal/cli`; fields that only take effect
+in later phases are labeled explicitly.
 
 ## 1. Source of Truth
 
 YAML is the only user-editable configuration source of truth. SQLite stores
 monitoring state, not a duplicate of backend definitions or policy. Environment
-variables supply secret values and may override the configuration file path;
-they are not a general second configuration system.
+variables supply `${NAME}` string substitutions and may override the
+configuration file path; they are not a general second configuration system.
 
 ## 2. File Discovery
 
@@ -36,25 +36,33 @@ Rules:
 - An explicit `--config` path that does not exist is an error. There is no
   fallback.
 - If `ABOUEI_CONFIG` is set but the file cannot be read, that is an error. There
-  is no fallback.
+  is no fallback. An empty `ABOUEI_CONFIG` value is treated as unset.
 - If neither explicit source exists, the default locations are searched in
   order. If none exists, the command fails with a hint to run
   `abouei-checker init`.
 - Relative paths are resolved against the current working directory.
-- A configuration file is limited to 1 MiB.
+- A configuration file is limited to 1 MiB. Reads stop at 1 MiB + 1 byte.
 - YAML must contain exactly one document. Unknown fields, duplicate mapping
   keys, and unsupported schema versions are errors.
 - `~` is not expanded by the application; an unquoted shell `~` is expanded by
   the shell before the argument reaches the process.
 - The file must be a regular file. Directories and special files are rejected.
+  Symbolic links are not followed for configuration loading; point `--config` at
+  the real file instead.
+- Discovery does not search parent directories or arbitrary locations. The
+  working-directory candidate is exactly `./abouei.yaml`.
 
 `init [PATH]` writes a template to `./abouei.yaml` by default. It does not create
-or modify the database. Existing files are not overwritten without `--force`.
+or modify the database, read configuration, or resolve environment references.
+Existing files are not overwritten without `--force`. New files use owner-only
+permissions (`0600`) where the platform supports them, and created parent
+directories use `0700`. `init` rejects symbolic-link targets.
 
-## 3. Complete Proposed Schema
+## 3. Complete Schema
 
 The following example shows every section. Optional sections may be omitted.
 It is deliberately illustrative: hostnames, IDs, and values are examples.
+Schema version 1 is frozen for the v1 application; see [ADR-0006](decisions/0006-yaml-decoder-and-config-schema.md).
 
 ```yaml
 # Required. Only schema version 1 is accepted by the v1 application.
@@ -281,23 +289,33 @@ Rules:
 1. `${NAME}` is replaced with the environment variable value. `NAME` must match
    `[A-Za-z_][A-Za-z0-9_]*`.
 2. References can be embedded in a larger string.
-3. `$$` produces a literal `$`.
-4. A malformed `${...}` reference is a configuration error.
+3. `$$` produces a literal `$`. A single `$` that is not followed by `{` or `$`
+   is also literal.
+4. A malformed `${...}` reference is a configuration error. This includes an
+   empty or invalid name and a missing closing brace.
 5. A missing or empty environment variable is a configuration error. There is
    no empty-string fallback.
 6. Environment variable names are case-sensitive on Unix-like systems and
    follow the host operating system on Windows.
-7. Expansion applies to string values only, not mapping keys. YAML anchors and
-   aliases are permitted, but the 1 MiB file limit and strict decoding still
-   apply.
-8. Literal secret values are accepted but discouraged. Protect the file with
+7. Expansion applies to YAML string-typed field values, including duration
+   strings, and not to mapping keys, integers, booleans, or numeric lists.
+   YAML anchors and aliases are permitted, but the 1 MiB file limit and strict
+   decoding still apply. An aliased `body_match` is expanded once.
+8. Resolved values are inserted verbatim and are not rescanned. A secret value
+   containing `$` or `${...}` is preserved literally and cannot introduce a new
+   reference.
+9. Literal secret values are accepted but discouraged. Protect the file with
    filesystem permissions and avoid committing it.
+10. Every value substituted from the environment is registered with the
+    application redactor, including non-secret substitutions. This can
+    over-redact a common value; prefer dedicated secret variables.
 
 Error reporting rules:
 
 - Errors identify the field path and environment variable name, for example
   `backends[0].headers.Authorization: environment variable API_TOKEN is not set`.
-- Errors never include the resolved value or the full header map.
+- Errors never include the resolved value, the raw scalar snippet from a YAML
+  type error, or the full header map.
 - `validate` does not print the configuration file contents.
 - All resolved secret values are marked for redaction and must not appear in
   logs, JSON, diagnostics, notification payloads, or database rows.
@@ -312,9 +330,9 @@ The top-level `notifications` section defines the transport. Per-backend
 
 | Field | Required | Default | Rules |
 | --- | --- | --- | --- |
-| `webhook.url` | Conditional | — | Absolute `http` or `https` URL; no userinfo; no fragment; required when any effective notification is enabled |
+| `webhook.url` | Conditional | — | Absolute `http` or `https` URL; maximum 2048 bytes; no userinfo; no fragment; required when any effective notification is enabled |
 | `webhook.timeout` | No | `10s` | Duration 100ms..2m |
-| `webhook.headers` | No | empty | Map of custom header names to string values; maximum 50 entries |
+| `webhook.headers` | No | empty | Map of custom header names to string values; maximum 50 entries; each value at most 8 KiB and all header material at most 16 KiB |
 | `retry.max_attempts` | No | `5` | Integer 1..20; includes the first attempt |
 | `retry.initial_backoff` | No | `5s` | Duration 100ms..1h |
 | `retry.max_backoff` | No | `5m` | Duration 100ms..1h; must be greater than or equal to `initial_backoff` |
@@ -347,8 +365,8 @@ reminders are disabled.
 | --- | --- | --- | --- |
 | `id` | Yes | — | Unique; matches `^[a-z0-9][a-z0-9_-]{0,62}$`; stable identity |
 | `name` | No | same as `id` | Non-empty display string; maximum 128 UTF-8 bytes |
-| `url` | Yes | — | Absolute `http`/`https` URL; host required; no userinfo; no fragment |
-| `headers` | No | empty | Maximum 50 entries; valid HTTP token names; no CR/LF/NUL in values |
+| `url` | Yes | — | Absolute `http`/`https` URL; maximum 2048 bytes; host required; no userinfo; no fragment; no whitespace or control characters |
+| `headers` | No | empty | Maximum 50 entries; valid HTTP token names; no CR/LF/NUL in values; each value at most 8 KiB and all header material at most 16 KiB |
 | policy fields | No | inherited | `interval`, `timeout`, `failure_threshold`, `recovery_threshold`, `max_response_bytes`, `follow_redirects`, `accepted_status_codes`, `body_match`, `notifications` |
 
 Backend IDs are the durable identity used in observations, incidents, webhook
@@ -406,16 +424,19 @@ and the latest backend state are never removed by routine cleanup. See
 Configuration validation happens before any database or network operation and
 is a pure operation. It is responsible for:
 
-- file size, YAML syntax, single-document enforcement, duplicate keys, unknown
-  fields, and schema version;
-- environment expansion and missing/empty variable failures;
+- file size, regular-file checks, symlink rejection, YAML syntax,
+  single-document enforcement, duplicate keys, unknown fields, and schema
+  version;
+- environment expansion, malformed references, and missing/empty variable
+  failures;
 - required fields, types, ranges, durations, and cross-field constraints;
 - unique backend IDs and stable ID format;
-- URL scheme, host, userinfo, and fragment restrictions;
-- header name/value validity and reserved headers;
+- URL scheme, host, userinfo, fragment, length, whitespace, and control
+  character restrictions;
+- header name/value validity, reserved headers, per-value and total size limits;
 - status-code list validity and body-match type/value/regex compilation;
 - effective policy inheritance and notification enablement;
-- webhook URL presence when required;
+- webhook URL presence when required and retry backoff ordering;
 - relative database path resolution;
 - limits on backends and headers.
 
@@ -427,8 +448,9 @@ Validation is not responsible for:
 - database schema compatibility;
 - verifying that a configured backend is currently healthy.
 
-`validate` resolves environment references to prove they exist, but it must not
-render the resolved values.
+`validate` resolves environment references to prove they exist, but it does not
+render the resolved values. `validate` performs no network request and does not
+create or open the SQLite database.
 
 ## 8. Failure Behavior
 
@@ -436,6 +458,7 @@ render the resolved values.
 | --- | --- |
 | No configuration file found | Exit 2; message names discovery sources and suggests `init` |
 | Explicit path missing | Exit 2; no fallback |
+| Path is a directory, special file, or symbolic link | Exit 2; names the path and the rule |
 | YAML syntax/duplicate key/unknown field | Exit 2; safe field path and line information where available |
 | Unsupported `version` | Exit 2; states supported version `1` |
 | Missing/empty environment variable | Exit 2; names variable and field path, never the value |
@@ -444,6 +467,9 @@ render the resolved values.
 | Notification enabled without webhook URL | Exit 2 |
 | File larger than 1 MiB | Exit 2 |
 | Permission or unexpected I/O failure | Exit 2 for configuration loading; no partial configuration is used |
+| `init` target already exists without `--force` | Exit 2; file is left untouched |
+| `init` target is a directory or symbolic link | Exit 2; file is left untouched |
+| `init` filesystem write failure | Exit 3 |
 | Database missing/unreadable/corrupt | Exit 3 for commands that need persistence; never auto-recreate |
 | Database schema newer than binary | Exit 3; requires a newer executable |
 | Configuration valid but endpoint unhealthy | Not a configuration error; command reports health and uses exit 1 for `check` |
@@ -451,7 +477,10 @@ render the resolved values.
 Validation errors are aggregated where practical so a user can fix multiple
 fields in one pass. Errors contain field paths and rule descriptions; they never
 dump the complete configuration or resolved secrets. At most 20 detailed
-field errors are shown, followed by a count if more remain.
+field errors are shown, followed by a count if more remain. Errors are reported
+in a deterministic schema order. In `--output json` mode, `validate` writes a
+JSON error envelope with `code`, `message`, and safe `details` to stdout while
+writing exactly one human-readable error line to stderr.
 
 ## 9. Schema Versioning
 
@@ -462,8 +491,8 @@ field errors are shown, followed by a count if more remain.
 - The config schema version is independent of the application SemVer.
 - There is no automatic configuration migration in v1. A future release may add
   an explicit migration command; it must never rewrite a file silently.
-- The schema is frozen when Phase 2 implementation begins. Changes after that
-  require an ADR and tests for old/new version behavior.
+- Version 1 is frozen as of Phase 2. Changes after that require an ADR and tests
+  for old/new version behavior; see [ADR-0006](decisions/0006-yaml-decoder-and-config-schema.md).
 
 ## 10. Secret-Handling Examples
 
@@ -489,6 +518,16 @@ token is still redacted from logs and errors by the implementation. Prefer an
 
 ## 11. Implementation Status
 
-Phase 1 has not implemented this loader. The structured configuration example is
-a proposed contract for Phase 2. The executable accepts `--config PATH` but does
-not read it; only `version` is implemented, and no YAML or SQLite is used.
+Phase 2 implements the complete loader in `internal/config`:
+
+- discovery and bounded reads with regular-file and symlink checks;
+- strict version-1 decoding with unknown-field and duplicate-key rejection;
+- `${NAME}` expansion with `$$` escaping and secret registration;
+- defaults, per-backend inheritance, validation, and normalization;
+- `init` template generation in `internal/config` and `internal/cli`;
+- `validate` with text and JSON output and no network or database access.
+
+The monitoring fields are accepted and validated, but they have no runtime
+effect until their owning phases: probing and scheduling (Phase 3), incidents,
+persistence, and webhook delivery (Phases 4–5). No SQLite database is opened by
+this phase.

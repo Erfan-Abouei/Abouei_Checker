@@ -4,7 +4,7 @@
 | --- | --- |
 | Project | AboueiChecker (`Abouei_Checker`) |
 | Document status | Approved Phase 0 baseline |
-| Product status | Pre-implementation; only `version` is executable |
+| Product status | Phase 2: configuration, `init`, and `validate` implemented; monitoring pending |
 | Last updated | 2026-10-22 |
 
 This document records the approved product requirements and the Phase 0 scope. It
@@ -167,8 +167,9 @@ Cobra is the selected CLI framework because it provides a maintained command
 tree, help generation, and flag parsing without imposing application
 architecture. The full contract is [cli-contract.md](cli-contract.md).
 
-Phase 0 implements only the root command and `version`; the operational commands
-are planned and must not be presented as implemented.
+Phase 0 implemented only the root command and `version`; Phases 1–2 added the
+shared foundation, `init`, and `validate`. Operational monitoring commands
+remain planned and must not be presented as implemented.
 
 ### Decision 10 — Human-readable and machine-readable output
 

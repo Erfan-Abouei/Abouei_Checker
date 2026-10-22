@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 1 logging, redaction, and error controls implemented; remaining controls in later phases |
+| Status | Phase 2 configuration loading, expansion, and redaction registration implemented; remaining controls in later phases |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md), [Testing](testing-and-quality.md) |
 
 Security is a release gate, not a Phase 0 claim. This document defines the
@@ -56,8 +56,9 @@ variables are errors. See
 
 ### 3.2 Mandatory handling rules
 
-1. Resolve secrets only when constructing the client/request, not at parse time
-   for display.
+1. Resolve environment references during configuration loading, after strict
+   decoding and before defaults/validation. Never resolve values for display or
+   diagnostics. Resolved values live only in the in-memory configuration.
 2. Store resolved secrets only in memory for the lifetime of the process. Never
    persist them in SQLite.
 3. Never log:
@@ -196,9 +197,9 @@ URLs:
 - Non-empty host.
 - No userinfo (`user:password@host` is rejected; use headers).
 - No fragment.
+- No whitespace or control characters.
 - Query strings are allowed for compatibility but treated as sensitive in logs.
-- Backend and webhook URLs are limited in length (implementation cap, at least
-  2048 bytes; document final value in Phase 2/3).
+- Backend and webhook URLs are limited to 2048 bytes.
 - No `file:`, `unix:`, `ftp:`, or other schemes.
 
 Headers:
@@ -206,8 +207,7 @@ Headers:
 - Header name must be a valid HTTP token.
 - Value must not contain CR, LF, or NUL.
 - Maximum 50 configured headers per target.
-- Maximum 8 KiB per value and 16 KiB total header material, subject to final
-  implementation validation.
+- Maximum 8 KiB per value and 16 KiB total header material.
 - Reserved names are rejected as described in
   [configuration.md](configuration.md#58-backends).
 - Header names are canonicalized for duplicate detection.
@@ -256,7 +256,8 @@ Headers:
 
 ### 10.1 Implemented safe-logging boundary
 
-Phase 1 implements the following boundary in `internal/logging`:
+Phase 1 implemented the following boundary in `internal/logging`; Phase 2 wires
+configuration secrets into it:
 
 1. **Structural allowlist (primary control).** Only documented safe field names
    retain their values. An unknown field name keeps its name but its value becomes
@@ -265,10 +266,10 @@ Phase 1 implements the following boundary in `internal/logging`:
 2. **Safe errors.** Errors implementing `SafeMessage() string` are rendered with
    that message. Other errors are reduced to text and passed through the
    redactor. Application errors never render their wrapped cause.
-3. **Registered secrets.** Resolved secret values are registered with
-   `Redactor.AddSecrets` and replaced literally and in query-escaped form. Phase
-   1 has no configuration loader, so the production registry starts empty; Phase
-   2 must register every resolved header, token, cookie, and environment value.
+3. **Registered secrets.** Resolved environment values are registered with
+   `Redactor.AddSecrets` by `internal/app.LoadConfig` and replaced literally and
+   in query-escaped form. `validate` registers them before rendering any output.
+   Header values are additionally never logged structurally.
 4. **Pattern backstop.** URL-like strings render as scheme and host only.
    Bearer/basic credentials, `Cookie`/`Set-Cookie`, query-secret parameters, and
    named secret assignments are normalized. This is defense in depth, not a
@@ -350,7 +351,10 @@ image digests, generate an SBOM, and scan the runtime image.
 - Prefer environment references over literal secrets.
 - Restrict configuration permissions to the owner (for example `0600`).
 - Do not commit a real `abouei.yaml`; the repository ignores it.
-- `init` should create files with owner-only permissions.
+- `init` creates files with owner-only permissions and refuses symbolic-link
+  targets.
+- The loader rejects symbolic links and non-regular files, bounds reads to 1 MiB,
+  and never creates or repairs a configuration file.
 - `validate` never prints the file or resolved values.
 - Configuration is trusted input; do not load it from a world-writable location.
 - The default config discovery does not search the current directory before an
@@ -358,23 +362,32 @@ image digests, generate an SBOM, and scan the runtime image.
 
 ## 15. Security Verification
 
-Phase 1 verification includes:
+Phase 2 verification includes:
 
 - `gofmt`, `go vet`, `golangci-lint` (including `gosec`), unit tests, race
   detector, shuffled race tests, coverage, and cross-compilation.
+- Parsing tests for file-size limits, regular-file/symlink rejection, unknown
+  fields, duplicate keys, multiple documents, wrong root types, and adversarial
+  YAML.
+- URL and header validation tests, including reserved headers, CR/LF/NUL
+  injection, per-value and total size limits, and case-insensitive duplicates.
+- Secret tests for `${NAME}`, embedding, `$$`, missing/empty/malformed
+  references, non-recursive substitution, alias handling, and registration.
+- Tests proving validation errors and JSON output never contain resolved
+  secrets, raw scalar snippets, or full URLs.
+- CLI tests proving `validate` sends no HTTP request and creates no database, and
+  that `init` refuses overwrite without `--force` and protects new files.
 - Dedicated redaction tests that inject bearer tokens, API keys, cookies,
   session values, registered secrets, URL userinfo/query strings, and
   secret-bearing errors into both text and JSON log handlers.
-- Tests proving JSON command output remains valid while debug logs go to stderr.
-- GitHub Actions CI and CodeQL executed successfully on pull request #1,
-  including the pinned `govulncheck` step.
+- GitHub Actions CI and CodeQL results on the Phase 2 pull request.
 - `govulncheck` remains blocked in the local environment by HTTP 403 from
   `vuln.go.dev`; this is reported as a local environmental limitation, not a
-  pass.
+  pass. CI runs the pinned scan.
 
-Later phases must add tests for header validation, redirect policy, response
-limits, TLS verification, malformed responses, webhook retry state, and database
-permissions. A security review is a `v1.0.0` release gate.
+Later phases must add tests for redirect policy, response limits, TLS
+verification, malformed responses, webhook retry state, and database permissions.
+A security review is a `v1.0.0` release gate.
 
 ## 16. Reporting a Vulnerability
 
