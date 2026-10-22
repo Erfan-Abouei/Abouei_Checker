@@ -59,13 +59,23 @@ const (
 	CodeInternal             Code = "internal"
 )
 
-// Error is an application failure with a safe user-facing message and an
-// optional internal cause. Error() returns the safe message; Unwrap exposes the
-// cause for diagnostics. Logs and CLI output must use SafeMessage.
+// Detail is a safe field-level failure description for JSON error output.
+type Detail struct {
+	// Field is the configuration field path, for example backends[0].timeout.
+	Field string `json:"field"`
+	// Rule is the violated rule or validation message.
+	Rule string `json:"rule"`
+}
+
+// Error is an application failure with a safe user-facing message, optional
+// safe field details, and an optional internal cause. Error() returns the safe
+// message; Unwrap exposes the cause for diagnostics. Logs and CLI output must
+// use SafeMessage.
 type Error struct {
 	Category Category
 	Code     Code
 	Message  string
+	Details  []Detail
 	cause    error
 }
 
