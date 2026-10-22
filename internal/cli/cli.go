@@ -25,6 +25,7 @@ const (
 	flagOutput   = "output"
 
 	defaultLogLevel = "info"
+	defaultInitPath = "abouei.yaml"
 )
 
 type outputFormat string
@@ -42,6 +43,7 @@ type appFactory func(app.Options) (*app.App, error)
 type commandState struct {
 	application *app.App
 	output      outputFormat
+	command     string
 }
 
 // Execute runs the CLI with the given arguments and returns a process exit
@@ -68,7 +70,7 @@ func executeWith(
 		if !errors.As(err, &appErr) {
 			err = app.WrapError(app.CategoryUsage, app.CodeUsageInvalid, err.Error(), err)
 		}
-		return reportError(err, stderr, state)
+		return reportError(err, stdout, stderr, state)
 	}
 
 	return ExitSuccess
@@ -89,9 +91,9 @@ func newRootCommand(stdout, stderr io.Writer, newApp appFactory) (*cobra.Command
 		Long: `AboueiChecker periodically probes backend health endpoints, records
 observations and incidents, and delivers configurable webhook notifications.
 
-Only "version" is implemented. The global --config and --log-level flags are
-accepted by every command, but configuration loading and the operational
-commands remain planned.`,
+The version, init, and validate commands are implemented. Monitoring commands
+remain planned: they are intentionally not registered until their full
+contracts are implemented.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -112,16 +114,18 @@ commands remain planned.`,
 	flags.String(
 		flagConfig,
 		"",
-		"path to the configuration file (accepted but not loaded in this phase)",
+		"path to the configuration file (default: discovery via ABOUEI_CONFIG, ./abouei.yaml, or the user config directory)",
 	)
 	flags.String(
 		flagLogLevel,
 		defaultLogLevel,
-		"log level: debug, info, warn, or error (case-insensitive)",
+		"override configuration logging.level: debug, info, warn, or error (case-insensitive)",
 	)
 	flags.String(flagOutput, string(outputText), "output format: text or json")
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		state.command = cmd.Name()
+
 		configPath, err := cmd.Flags().GetString(flagConfig)
 		if err != nil {
 			return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to read --config", err)
@@ -130,6 +134,7 @@ commands remain planned.`,
 		if err != nil {
 			return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to read --log-level", err)
 		}
+		logLevelSet := cmd.Flags().Changed(flagLogLevel)
 		outputRaw, err := cmd.Flags().GetString(flagOutput)
 		if err != nil {
 			return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to read --output", err)
@@ -138,22 +143,25 @@ commands remain planned.`,
 		if err != nil {
 			return app.NewUsageError(err.Error())
 		}
+		state.output = output
 
 		application, err := newApp(app.Options{
-			ConfigPath: configPath,
-			LogLevel:   logLevel,
-			LogWriter:  stderr,
+			ConfigPath:  configPath,
+			LogLevel:    logLevel,
+			LogLevelSet: logLevelSet,
+			LogWriter:   stderr,
 		})
 		if err != nil {
 			return err
 		}
 
 		state.application = application
-		state.output = output
 		return nil
 	}
 
 	root.AddCommand(newVersionCommand(state, stdout))
+	root.AddCommand(newValidateCommand(state, stdout))
+	root.AddCommand(newInitCommand(state, stdout))
 	root.SetHelpCommand(newHelpCommand(root))
 	// Initialize Cobra's help and completion commands before Execute so the
 	// unknown-command pre-check can find them. Cobra also calls these during
@@ -226,6 +234,140 @@ defaults when it is not supplied.`,
 	}
 }
 
+func newValidateCommand(state *commandState, stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate",
+		Short: "Load and validate configuration without network or database access",
+		Long: `Discover or load the selected configuration, resolve ${NAME} environment
+references, apply documented defaults and per-backend inheritance, and run all
+schema and cross-field validation.
+
+validate never probes an endpoint, opens SQLite, or delivers notifications. It
+prints a safe summary and never prints resolved header values, tokens, or the
+configuration file.`,
+		Example: `  abouei-checker validate
+  abouei-checker validate --config ./abouei.yaml
+  abouei-checker validate --config ./abouei.yaml --output json`,
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if state.application == nil {
+				return app.NewError(app.CategoryInternal, app.CodeInternal, "application is not initialized")
+			}
+
+			summary, err := state.application.LoadConfig()
+			if err != nil {
+				return err
+			}
+
+			if state.output == outputJSON {
+				payload := envelope{
+					SchemaVersion: "1",
+					Command:       "validate",
+					GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+					Status:        "success",
+					Data: validateData{
+						Valid:         true,
+						ConfigVersion: summary.Version,
+						BackendCount:  len(summary.BackendIDs),
+						BackendIDs:    summary.BackendIDs,
+					},
+				}
+				if err := writeJSON(stdout, payload); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write JSON validate output", err)
+				}
+			} else {
+				if _, err := fmt.Fprintf(
+					stdout,
+					"configuration is valid (schema version %d, %d backends)\n",
+					summary.Version,
+					len(summary.BackendIDs),
+				); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write validate output", err)
+				}
+				for _, id := range summary.BackendIDs {
+					if _, err := fmt.Fprintf(stdout, "  - %s\n", id); err != nil {
+						return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write validate output", err)
+					}
+				}
+			}
+
+			state.application.Logger().DebugContext(
+				cmd.Context(),
+				"configuration validated",
+				"component", "cli",
+				"command", "validate",
+				"operation", "validate_configuration",
+				"backend_count", len(summary.BackendIDs),
+				"config_schema_version", summary.Version,
+			)
+			return nil
+		},
+	}
+}
+
+func newInitCommand(state *commandState, stdout io.Writer) *cobra.Command {
+	var force bool
+
+	command := &cobra.Command{
+		Use:   "init [PATH]",
+		Short: "Write a commented configuration template",
+		Long: `Write a commented configuration template to PATH, which defaults to
+./abouei.yaml. Existing files are not overwritten unless --force is supplied.
+
+init does not read configuration, resolve environment references, probe
+endpoints, or create a database. New files use owner-only permissions where the
+platform supports them.`,
+		Example: `  abouei-checker init
+  abouei-checker init ./config/abouei.yaml
+  abouei-checker init ./abouei.yaml --force`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if state.application == nil {
+				return app.NewError(app.CategoryInternal, app.CodeInternal, "application is not initialized")
+			}
+
+			path := defaultInitPath
+			if len(args) == 1 {
+				path = args[0]
+			}
+
+			overwritten, err := state.application.WriteConfigTemplate(path, force)
+			if err != nil {
+				return err
+			}
+
+			if state.output == outputJSON {
+				payload := envelope{
+					SchemaVersion: "1",
+					Command:       "init",
+					GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+					Status:        "success",
+					Data: initData{
+						Path:        path,
+						Overwritten: overwritten,
+					},
+				}
+				if err := writeJSON(stdout, payload); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write JSON init output", err)
+				}
+				return nil
+			}
+
+			verb := "created"
+			if overwritten {
+				verb = "overwrote"
+			}
+			if _, err := fmt.Fprintf(stdout, "%s %s\n", verb, path); err != nil {
+				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write init output", err)
+			}
+			return nil
+		},
+	}
+
+	command.Flags().BoolVar(&force, "force", false, "overwrite an existing configuration file")
+	return command
+}
+
 func newHelpCommand(root *cobra.Command) *cobra.Command {
 	return &cobra.Command{
 		Use:   "help [command]",
@@ -262,7 +404,7 @@ func parseOutputFormat(raw string) (outputFormat, error) {
 	}
 }
 
-func reportError(err error, stderr io.Writer, state *commandState) int {
+func reportError(err error, stdout, stderr io.Writer, state *commandState) int {
 	message := app.SafeMessage(err)
 	if message == "" {
 		message = "internal error"
@@ -270,8 +412,33 @@ func reportError(err error, stderr io.Writer, state *commandState) int {
 	if state != nil && state.application != nil {
 		message = state.application.Redactor().RedactString(message)
 	}
+
+	if state != nil && state.output == outputJSON {
+		payload := envelope{
+			SchemaVersion: "1",
+			Command:       state.command,
+			GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+			Status:        "error",
+			Data:          nil,
+			Error:         errorObjectFor(err, message),
+		}
+		_ = writeJSON(stdout, payload)
+	}
+
 	_, _ = fmt.Fprintf(stderr, "Error: %s\n", message)
 	return ExitCodeFor(err)
+}
+
+func errorObjectFor(err error, message string) errorObject {
+	object := errorObject{
+		Code:    string(app.CodeOf(err)),
+		Message: message,
+	}
+	var appErr *app.Error
+	if errors.As(err, &appErr) {
+		object.Details = appErr.Details
+	}
+	return object
 }
 
 type envelope struct {
@@ -283,6 +450,12 @@ type envelope struct {
 	Error         any    `json:"error"`
 }
 
+type errorObject struct {
+	Code    string       `json:"code"`
+	Message string       `json:"message"`
+	Details []app.Detail `json:"details,omitempty"`
+}
+
 type versionData struct {
 	Name      string `json:"name"`
 	Version   string `json:"version"`
@@ -290,6 +463,18 @@ type versionData struct {
 	BuildDate string `json:"build_date"`
 	GoVersion string `json:"go_version"`
 	Platform  string `json:"platform"`
+}
+
+type validateData struct {
+	Valid         bool     `json:"valid"`
+	ConfigVersion int      `json:"config_version"`
+	BackendCount  int      `json:"backend_count"`
+	BackendIDs    []string `json:"backend_ids"`
+}
+
+type initData struct {
+	Path        string `json:"path"`
+	Overwritten bool   `json:"overwritten"`
 }
 
 func writeJSON(w io.Writer, value any) error {
