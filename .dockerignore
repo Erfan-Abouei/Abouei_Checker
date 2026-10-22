@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.golangci.yml
+.editorconfig
+bin
+dist
+data
+docs
+examples
+scripts
+coverage.out
+Dockerfile
+Makefile
+*.md

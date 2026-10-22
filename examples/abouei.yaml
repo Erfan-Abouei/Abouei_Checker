@@ -1,0 +1,86 @@
+# Proposed AboueiChecker configuration for schema version 1.
+#
+# This file illustrates the specification in docs/configuration.md.
+# The Phase 0 binary does not load configuration yet.
+#
+# Secrets are supplied through the environment. Do not put real tokens in this
+# file. Notifications are disabled so this example cannot send alerts by
+# accident.
+
+version: 1
+
+storage:
+  database_path: ./data/abouei.db
+
+runtime:
+  max_concurrent_probes: 8
+  shutdown_timeout: 30s
+
+logging:
+  level: info
+  format: text
+
+defaults:
+  interval: 60s
+  timeout: 10s
+  failure_threshold: 3
+  recovery_threshold: 1
+  max_response_bytes: 1048576
+  follow_redirects: false
+  notifications:
+    enabled: false
+    notify_on_down: true
+    notify_on_recovery: true
+    reminder_interval: 0s
+    reminder_max: 0
+
+# The transport must be present when any effective policy is enabled. A literal
+# placeholder is used here because the example does not deliver notifications.
+notifications:
+  webhook:
+    url: https://hooks.example.com/abouei
+    timeout: 10s
+    headers:
+      X-Monitor: abouei-checker
+  retry:
+    max_attempts: 5
+    initial_backoff: 5s
+    max_backoff: 5m
+
+retention:
+  observations: 720h
+  incidents: 4320h
+  delivered_events: 168h
+
+backends:
+  - id: example-site
+    name: Example site
+    url: https://example.com/
+    accepted_status_codes: [200]
+    body_match:
+      type: contains
+      value: Example Domain
+    notifications:
+      enabled: false
+
+  # Example of secret references. Set EXAMPLE_API_TOKEN in the environment
+  # before validating or running with this backend enabled.
+  - id: example-api
+    name: Example API
+    url: https://api.example.com/health
+    headers:
+      Authorization: "Bearer ${EXAMPLE_API_TOKEN}"
+      X-API-Key: ${EXAMPLE_API_KEY}
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 2
+    accepted_status_codes: [200]
+    body_match:
+      type: regex
+      value: '"status"\s*:\s*"ok"'
+    notifications:
+      enabled: false
+      notify_on_down: true
+      notify_on_recovery: true
+      reminder_interval: 30m
+      reminder_max: 6
