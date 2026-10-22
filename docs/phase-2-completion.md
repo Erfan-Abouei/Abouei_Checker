@@ -4,7 +4,7 @@
 | --- | --- |
 | Date | 2026-10-22 |
 | Phase | 2 — Configuration & Backend Registry |
-| Status | Implemented and verified locally and on GitHub CI/CodeQL (PR #6); merge pending |
+| Status | Implemented and verified locally and on GitHub CI/CodeQL; merged into `develop` via PR #6 and promoted to `main` |
 | Repository | `github.com/Erfan-Abouei/Abouei_Checker` |
 | Branch | `feature/phase-2-configuration` |
 | Pull request | [#6](https://github.com/Erfan-Abouei/Abouei_Checker/pull/6) |
@@ -307,17 +307,26 @@ Residual risks:
 
 ## 9. GitHub CI/CodeQL Status
 
-Remote validation was performed on pull request #6.
+Remote validation was performed on pull request #6 and on the promoted
+branches.
 
 | Workflow | Run | Branch/event | Result |
 | --- | --- | --- | --- |
 | CI | [39784874698](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39784874698) | feature branch, pull request #6 | success |
 | CodeQL | [39784874737](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39784874737) | feature branch, pull request #6 | success |
+| CI | [39786047251](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786047251) | final report head, pull request #6 | success |
+| CodeQL | [39786047301](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786047301) | final report head, pull request #6 | success |
+| CI | [39786386388](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786386388) | `develop` push after PR merge | success |
+| CodeQL | [39786386387](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786386387) | `develop` push after PR merge | success |
+| CI | [39786991513](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786991513) | `main` promotion push | success |
+| CodeQL | [39786991567](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786991567) | `main` promotion push | success |
+| CI | [39786998156](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786998156) | `develop` synchronization push | success |
+| CodeQL | [39786998221](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786998221) | `develop` synchronization push | success |
 
 CI jobs observed as successful: `Quality and tests`, `Lint`,
 `Cross-platform build`, and `Container smoke test`. The `Quality and tests` job
 includes the pinned `govulncheck` step, so the local 403 limitation is covered
-by an actual remote run. CodeQL `Analyze Go (go)` completed successfully.
+by actual remote runs. CodeQL `Analyze Go (go)` completed successfully.
 
 ## 10. Scope Compliance
 
@@ -343,26 +352,31 @@ explicitly documented as having no runtime effect yet.
 
 - Baseline `develop`: `8ea51b5` (Phase 1 merge).
 - Feature branch: `feature/phase-2-configuration`.
-- Pull request: [#6](https://github.com/Erfan-Abouei/Abouei_Checker/pull/6), targeting
-  `develop`.
+- Pull request: [#6](https://github.com/Erfan-Abouei/Abouei_Checker/pull/6), merged
+  into `develop` at `f77f2b7`.
 - Implementation commits:
   - `0c69ef2` — `feat(config): add strict YAML loading, validation, and init template`
   - `a765062` — `feat(app): load configuration and apply configuration logging`
   - `a9ee037` — `feat(cli): add init and validate commands with JSON error envelopes`
-  - a documentation commit follows local verification and contains this report.
-- `develop` and `main` are not modified by the feature branch.
-- No force-push, history rewrite, or tag was created.
+  - `c135a24` — documentation and Phase 2 report
+  - `2a4f648` — GitHub CI/CodeQL evidence update
+- `develop` was promoted to `main` at merge commit `0d90c42`.
+- `main` and `develop` were synchronized at `0d90c42`; this report-state update is
+  the only subsequent docs-only change.
+- No force-push, history rewrite, or tag was created. Feature branches were
+  retained.
 
 ## 12. Remaining Issues
 
-1. GitHub CI/CodeQL must run after the feature branch is pushed; this report will
-   be updated with observed results.
-2. Local `govulncheck` remains blocked by HTTP 403 from `vuln.go.dev`. CI is
-   configured to run the pinned scan.
-3. Docker runtime validation covers the `version` smoke path only; configuration
+1. Local `govulncheck` remains blocked by HTTP 403 from `vuln.go.dev`. CI runs
+   the pinned scan successfully; local-only environments still need access to
+   the vulnerability database.
+2. Docker runtime validation covers the `version` smoke path only; configuration
    mount and monitoring behavior remain later-phase gates.
-4. Remote branches are intentionally retained after merges until the final
-   git-flow cleanup decision.
+3. Remote feature branches are intentionally retained after merges. Deleting
+   them is a repository housekeeping decision, not a correctness requirement.
+4. Dependabot may open follow-up dependency PRs; they are outside Phase 2 scope
+   and require normal review.
 
 ## 13. Phase 3 Handoff and Dependencies
 
