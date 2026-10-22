@@ -358,20 +358,23 @@ image digests, generate an SBOM, and scan the runtime image.
 
 ## 15. Security Verification
 
-Phase 0 verification is limited to the scaffold and toolchain:
+Phase 1 verification includes:
 
-- `gofmt`, `go vet`, `golangci-lint`, unit tests, race detector, coverage, and
-  cross-compilation are run locally.
-- `govulncheck` is configured and pinned but cannot reach the vulnerability
-  database from the current build environment (HTTP 403); this is reported as an
-  environmental limitation, not a pass.
-- CI and CodeQL configuration can be syntax-validated locally but cannot execute
-  until the branch is pushed to GitHub.
-- Docker build and non-root smoke execution are validated locally.
+- `gofmt`, `go vet`, `golangci-lint` (including `gosec`), unit tests, race
+  detector, shuffled race tests, coverage, and cross-compilation.
+- Dedicated redaction tests that inject bearer tokens, API keys, cookies,
+  session values, registered secrets, URL userinfo/query strings, and
+  secret-bearing errors into both text and JSON log handlers.
+- Tests proving JSON command output remains valid while debug logs go to stderr.
+- GitHub Actions CI and CodeQL executed successfully on pull request #1,
+  including the pinned `govulncheck` step.
+- `govulncheck` remains blocked in the local environment by HTTP 403 from
+  `vuln.go.dev`; this is reported as a local environmental limitation, not a
+  pass.
 
-Later phases must add tests for redaction, header validation, redirect policy,
-response limits, TLS verification, malformed responses, webhook retry state, and
-database permissions. A security review is a `v1.0.0` release gate.
+Later phases must add tests for header validation, redirect policy, response
+limits, TLS verification, malformed responses, webhook retry state, and database
+permissions. A security review is a `v1.0.0` release gate.
 
 ## 16. Reporting a Vulnerability
 

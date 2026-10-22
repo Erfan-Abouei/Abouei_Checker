@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 complete (2026-10-22); Phases 1–7 pending |
+| Status | Phase 0 complete; Phase 1 implemented and verified (PR #1 open for review); Phases 2–7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -74,6 +74,11 @@ bootstrap, tooling, CI, Docker design, and handoff.
 - No operational monitoring feature implemented prematurely.
 
 ## 3. Phase 1 — Project Foundation Implementation
+
+**Status:** Implemented on `feature/phase-1-project-foundation`, pushed as pull
+request #1, with GitHub CI and CodeQL passing. Not merged into `develop`; review
+is pending. Evidence is recorded in the
+[Phase 1 completion report](phase-1-completion.md).
 
 ### Objective
 
