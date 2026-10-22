@@ -4,7 +4,7 @@ AboueiChecker (`abouei-checker`) is an open-source Go CLI for monitoring backend
 HTTP health endpoints, detecting outages and recoveries, keeping local SQLite
 history, and sending configurable generic webhook notifications.
 
-> **Project status: Phase 0 foundation.**
+> **Project status: Phase 0 foundation complete.**
 >
 > Only `abouei-checker version` and root/command help are implemented. The
 > monitoring commands, configuration loader, HTTP probe engine, SQLite store,
@@ -61,6 +61,7 @@ pending:
 - [Security](docs/security.md)
 - [Roadmap](docs/roadmap.md)
 - [Release checklist](docs/release-checklist.md)
+- [Phase 0 completion report](docs/phase-0-completion.md)
 - [Architecture decisions](docs/decisions/README.md)
 
 ## Installation (Current Phase)

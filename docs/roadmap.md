@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 foundation in progress until its final verification report |
+| Status | Phase 0 complete (2026-10-22); Phases 1–7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -41,8 +41,8 @@ not a silent reordering. See
 
 ## 2. Phase 0 — Project Foundation & Engineering Standards
 
-**Status:** Complete when the Phase 0 report records verified evidence. This
-document does not itself prove completion.
+**Status:** Complete (2026-10-22). Evidence is recorded in the
+[Phase 0 completion report](phase-0-completion.md).
 
 ### Objective
 
