@@ -40,6 +40,7 @@ distributed observability system.
 | --- | --- |
 | `version` (text and JSON) | Implemented |
 | Root help and command help | Implemented |
+| Shell completion for bash, zsh, fish, and PowerShell | Implemented |
 | Global `--config`, `--log-level`, `--output` flags | Implemented |
 | Structured logging and redaction foundation | Implemented |
 | Shared error categories and exit-code mapping | Implemented |
@@ -122,6 +123,27 @@ abouei-checker version --help
 
 `--log-level` accepts `debug`, `info`, `warn`, and `error` case-insensitively.
 Logs go to stderr; `--output json` keeps stdout machine-readable.
+
+### Shell completion
+
+Cobra-generated completion is available for bash, zsh, fish, and PowerShell.
+Generate the script with the matching subcommand and load it in the usual way
+for your shell:
+
+```sh
+# bash (current session)
+source <(abouei-checker completion bash)
+
+# zsh (current session; completion system must be initialized)
+source <(abouei-checker completion zsh)
+
+# fish
+abouei-checker completion fish | source
+```
+
+For a persistent installation, write the generated script to your shell's
+completion directory. Run `abouei-checker completion <shell> --help` for the
+upstream Cobra instructions.
 
 Planned command surface (not yet usable):
 
