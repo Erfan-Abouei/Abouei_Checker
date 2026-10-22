@@ -13,7 +13,8 @@ const (
 	ExitUsage = 2
 	// ExitInternal indicates an internal or operational failure.
 	ExitInternal = 3
-	// ExitNotificationFailure indicates that one or more required notification
-	// deliveries exhausted their retries during a one-shot command.
+	// ExitNotificationFailure indicates that a required notification delivery
+	// attempt failed during a one-shot command. The event remains queued for a
+	// later retry.
 	ExitNotificationFailure = 4
 )

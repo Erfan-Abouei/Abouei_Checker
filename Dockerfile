@@ -6,9 +6,8 @@ FROM ${GO_IMAGE} AS build
 
 WORKDIR /src
 
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates \
-	&& rm -rf /var/lib/apt/lists/*
+# The official Go image includes CA certificates; copying them avoids a network
+# package installation in the build stage.
 
 COPY go.mod go.sum ./
 RUN go mod download
