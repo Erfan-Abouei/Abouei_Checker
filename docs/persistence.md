@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 specification; SQLite implementation not present |
+| Status | Phase 4 implementation; migration 1 (`backend_state`, `incidents`, `observations`, `notification_events`) with transactional probe and outbox boundaries implemented |
 | Engine | SQLite (single file) |
 | Driver decision | `modernc.org/sqlite` (pure Go) planned |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Security](security.md) |

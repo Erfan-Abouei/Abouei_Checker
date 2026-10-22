@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 3 probe/scheduler controls implemented; `check`/`monitor` enforce timeouts, response limits, redirect policy, and redaction. Webhook, persistence, and restart controls remain in later phases |
+| Status | Phase 4 controls implemented: webhook payload redaction, TLS verification, redirect rejection, credential-safe delivery, SQLite file permissions, and sanitized persisted errors |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md), [Testing](testing-and-quality.md) |
 
 Security is a release gate, not a Phase 0 claim. This document defines the
