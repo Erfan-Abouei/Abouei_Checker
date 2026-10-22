@@ -26,7 +26,7 @@ type ProcessOutcome struct {
 	// ObservationID is the persisted observation row.
 	ObservationID int64
 	// Failures and Successes are the persisted streaks after the probe.
-	Failures int
+	Failures  int
 	Successes int
 	// FirstFailureAt is the active streak start, or zero when cleared.
 	FirstFailureAt time.Time
