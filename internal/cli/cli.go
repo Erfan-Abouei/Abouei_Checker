@@ -9,17 +9,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Erfan-Abouei/Abouei_Checker/internal/buildinfo"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/app"
 )
 
-const commandName = "abouei-checker"
+const (
+	commandName = "abouei-checker"
 
-// errInternal marks failures that are not caused by invalid usage.
-var errInternal = errors.New("internal error")
+	flagConfig   = "config"
+	flagLogLevel = "log-level"
+	flagOutput   = "output"
+
+	defaultLogLevel = "info"
+)
 
 type outputFormat string
 
@@ -28,18 +34,41 @@ const (
 	outputJSON outputFormat = "json"
 )
 
+type appFactory func(app.Options) (*app.App, error)
+
+// commandState carries values parsed by the root persistent pre-run into the
+// command implementations. It is scoped to one command tree and is not global
+// mutable state.
+type commandState struct {
+	application *app.App
+	output      outputFormat
+}
+
 // Execute runs the CLI with the given arguments and returns a process exit
 // code. It never calls os.Exit, which keeps command behavior testable.
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	root := NewRootCommand(stdout, stderr)
+	return executeWith(ctx, args, stdout, stderr, app.New)
+}
+
+// executeWith is the test seam for application-construction failures.
+func executeWith(
+	ctx context.Context,
+	args []string,
+	stdout, stderr io.Writer,
+	newApp appFactory,
+) int {
+	root, state := newRootCommand(stdout, stderr, newApp)
 	root.SetArgs(args)
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
-		if errors.Is(err, errInternal) {
-			return ExitInternal
+		// Command implementations return *app.Error for every failure they
+		// originate. Remaining errors come from Cobra's parse/validation layer
+		// (unknown command, flag, or argument), which is invalid usage.
+		var appErr *app.Error
+		if !errors.As(err, &appErr) {
+			err = app.WrapError(app.CategoryUsage, app.CodeUsageInvalid, err.Error(), err)
 		}
-		return ExitUsage
+		return reportError(err, stderr, state)
 	}
 
 	return ExitSuccess
@@ -47,46 +76,112 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 // NewRootCommand builds the CLI command tree.
 func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
+	root, _ := newRootCommand(stdout, stderr, app.New)
+	return root
+}
+
+func newRootCommand(stdout, stderr io.Writer, newApp appFactory) (*cobra.Command, *commandState) {
+	state := &commandState{output: outputText}
+
 	root := &cobra.Command{
 		Use:   commandName,
 		Short: "Monitor backend health endpoints and notify on incidents",
 		Long: `AboueiChecker periodically probes backend health endpoints, records
 observations and incidents, and delivers configurable webhook notifications.
 
-Only "version" is implemented in the Phase 0 foundation. The operational
-commands are specified in docs/cli-contract.md and will be implemented in
-later phases.`,
-		Args:          cobra.NoArgs,
+Only "version" is implemented. The global --config and --log-level flags are
+accepted by every command, but configuration loading and the operational
+commands remain planned.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			if err := cmd.Help(); err != nil {
+				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write help output", err)
+			}
+			return nil
 		},
 	}
 
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	root.PersistentFlags().String("output", string(outputText), "output format: text or json")
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return app.WrapError(app.CategoryUsage, app.CodeUsageInvalid, err.Error(), err)
+	})
 
-	root.AddCommand(newVersionCommand(stdout))
+	flags := root.PersistentFlags()
+	flags.String(
+		flagConfig,
+		"",
+		"path to the configuration file (accepted but not loaded in this phase)",
+	)
+	flags.String(
+		flagLogLevel,
+		defaultLogLevel,
+		"log level: debug, info, warn, or error (case-insensitive)",
+	)
+	flags.String(flagOutput, string(outputText), "output format: text or json")
 
-	return root
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		configPath, err := cmd.Flags().GetString(flagConfig)
+		if err != nil {
+			return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to read --config", err)
+		}
+		logLevel, err := cmd.Flags().GetString(flagLogLevel)
+		if err != nil {
+			return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to read --log-level", err)
+		}
+		outputRaw, err := cmd.Flags().GetString(flagOutput)
+		if err != nil {
+			return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to read --output", err)
+		}
+		output, err := parseOutputFormat(outputRaw)
+		if err != nil {
+			return app.NewUsageError(err.Error())
+		}
+
+		application, err := newApp(app.Options{
+			ConfigPath: configPath,
+			LogLevel:   logLevel,
+			LogWriter:  stderr,
+		})
+		if err != nil {
+			return err
+		}
+
+		state.application = application
+		state.output = output
+		return nil
+	}
+
+	root.AddCommand(newVersionCommand(state, stdout))
+	root.SetHelpCommand(newHelpCommand(root))
+	// Initialize Cobra's help and completion commands before Execute so the
+	// unknown-command pre-check can find them. Cobra also calls these during
+	// execution; repeated initialization is idempotent.
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+
+	return root, state
 }
 
-func newVersionCommand(stdout io.Writer) *cobra.Command {
+func newVersionCommand(state *commandState, stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print build information",
-		Args:  cobra.NoArgs,
+		Long: `Print the application name, version, commit, build date, Go version, and
+platform. Build metadata is injected at link time and falls back to development
+defaults when it is not supplied.`,
+		Example: `  abouei-checker version
+  abouei-checker version --output json`,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			format, err := outputFormatFrom(cmd)
-			if err != nil {
-				return err
+			if state.application == nil {
+				return app.NewError(app.CategoryInternal, app.CodeInternal, "application is not initialized")
 			}
 
-			info := buildinfo.Current()
+			info := state.application.BuildInfo()
 
-			if format == outputJSON {
+			if state.output == outputJSON {
 				payload := envelope{
 					SchemaVersion: "1",
 					Command:       "version",
@@ -102,42 +197,81 @@ func newVersionCommand(stdout io.Writer) *cobra.Command {
 					},
 				}
 				if err := writeJSON(stdout, payload); err != nil {
-					return err
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write JSON version output", err)
 				}
-				return nil
+			} else {
+				if _, err := fmt.Fprintf(
+					stdout,
+					"%s %s (commit %s, built %s, %s %s)\n",
+					commandName,
+					info.Version,
+					info.Commit,
+					info.BuildDate,
+					info.GoVersion,
+					info.Platform,
+				); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write version output", err)
+				}
 			}
 
-			_, err = fmt.Fprintf(
-				stdout,
-				"%s %s (commit %s, built %s, %s %s)\n",
-				commandName,
-				info.Version,
-				info.Commit,
-				info.BuildDate,
-				info.GoVersion,
-				info.Platform,
+			state.application.Logger().DebugContext(
+				cmd.Context(),
+				"version command completed",
+				"component", "cli",
+				"command", "version",
+				"operation", "version",
 			)
-			if err != nil {
-				return fmt.Errorf("%w: write version output: %w", errInternal, err)
-			}
-
 			return nil
 		},
 	}
 }
 
-func outputFormatFrom(cmd *cobra.Command) (outputFormat, error) {
-	raw, err := cmd.Flags().GetString("output")
-	if err != nil {
-		return "", fmt.Errorf("%w: read --output: %w", errInternal, err)
+func newHelpCommand(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "help [command]",
+		Short: "Help about any command",
+		Long:  "Show help for the root command or a specific command.",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(_ *cobra.Command, args []string) error {
+			target, _, err := root.Find(args)
+			if err != nil || target == nil {
+				return app.NewUsageError(fmt.Sprintf("unknown help topic %q", strings.Join(args, " ")))
+			}
+			target.InitDefaultHelpFlag()
+			if err := target.Help(); err != nil {
+				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write help output", err)
+			}
+			return nil
+		},
 	}
+}
 
+func noArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return app.NewUsageError(fmt.Sprintf("%q accepts no arguments, received %d", cmd.CommandPath(), len(args)))
+}
+
+func parseOutputFormat(raw string) (outputFormat, error) {
 	switch outputFormat(raw) {
 	case outputText, outputJSON:
 		return outputFormat(raw), nil
 	default:
 		return "", fmt.Errorf("invalid --output value %q: expected %q or %q", raw, outputText, outputJSON)
 	}
+}
+
+func reportError(err error, stderr io.Writer, state *commandState) int {
+	message := app.SafeMessage(err)
+	if message == "" {
+		message = "internal error"
+	}
+	if state != nil && state.application != nil {
+		message = state.application.Redactor().RedactString(message)
+	}
+	_, _ = fmt.Fprintf(stderr, "Error: %s\n", message)
+	return ExitCodeFor(err)
 }
 
 type envelope struct {
@@ -162,7 +296,7 @@ func writeJSON(w io.Writer, value any) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(value); err != nil {
-		return fmt.Errorf("%w: write JSON output: %w", errInternal, err)
+		return fmt.Errorf("encode JSON output: %w", err)
 	}
 	return nil
 }

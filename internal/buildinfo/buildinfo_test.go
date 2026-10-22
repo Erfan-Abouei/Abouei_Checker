@@ -26,3 +26,17 @@ func TestCurrentReportsCompileTimeMetadata(t *testing.T) {
 		t.Errorf("Platform = %q, want GOOS/GOARCH", info.Platform)
 	}
 }
+
+func TestDevelopmentDefaults(t *testing.T) {
+	t.Parallel()
+
+	if Version != "dev" {
+		t.Errorf("Version default = %q, want dev", Version)
+	}
+	if Commit != "none" {
+		t.Errorf("Commit default = %q, want none", Commit)
+	}
+	if BuildDate != "unknown" {
+		t.Errorf("BuildDate default = %q, want unknown", BuildDate)
+	}
+}

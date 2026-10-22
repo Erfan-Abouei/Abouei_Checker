@@ -10,6 +10,7 @@ technical question within those requirements.
 | [0002](0002-configuration-and-persistence-boundaries.md) | Configuration and persistence boundaries | Accepted |
 | [0003](0003-webhook-delivery-and-idempotency.md) | Webhook delivery, outbox, and idempotency | Accepted |
 | [0004](0004-secret-resolution-and-redaction.md) | Secret references and redaction | Accepted |
+| [0005](0005-logging-error-boundaries.md) | Phase 1 logging, redaction, and error boundaries | Accepted |
 
 ## Status meanings
 

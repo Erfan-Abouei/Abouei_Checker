@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 contract; only `version` and root help are implemented |
+| Status | Phase 1 contract; `version`, root help, and global flags implemented |
 | Executable | `abouei-checker` |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md) |
 
@@ -14,14 +14,14 @@ not be advertised as usable.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `version` | Implemented in Phase 0 | Print build metadata |
+| `version` | Implemented | Print build metadata |
 | `init` | Planned | Write a commented configuration template |
 | `validate` | Planned | Load, resolve, and validate configuration without network or database access |
 | `check` | Planned | Probe each selected backend once, persist state, attempt due notifications, and exit |
 | `monitor` | Planned | Continuously schedule probes and notifications until graceful shutdown |
 | `status` | Planned | Read current backend and incident state from SQLite |
 | `history` | Planned | Read observations and incident transitions from SQLite |
-| root/help | Implemented in Phase 0 | Show command help |
+| root/help | Implemented | Show command help |
 
 Running the root command with no arguments prints help and exits `0`. Running an
 unknown command or flag is a usage error and exits `2`.
@@ -30,16 +30,18 @@ unknown command or flag is a usage error and exits `2`.
 
 | Flag | Status | Default | Behavior |
 | --- | --- | --- | --- |
-| `--config PATH` | Planned (Phase 1) | discovery | Use an explicit YAML configuration file |
+| `--config PATH` | Implemented (Phase 1) | discovery | Accept an explicit YAML configuration file. Phase 1 records the path; the loader is implemented in Phase 2. |
 | `--output text\|json` | Implemented for `version`; planned globally | `text` | Select human-readable or structured output |
-| `--log-level LEVEL` | Planned (Phase 1) | config value | Override `logging.level` for this invocation; `debug`, `info`, `warn`, `error` |
+| `--log-level LEVEL` | Implemented (Phase 1) | `info` until configuration exists | Override `logging.level` case-insensitively; values are `debug`, `info`, `warn`, `error` |
 | `--help`, `-h` | Implemented | — | Show help for the root or a subcommand |
 | `help [COMMAND]` | Implemented via Cobra | — | Show command help |
 
 Precedence:
 
-- Configuration path: `--config` > `ABOUEI_CONFIG` > discovery defaults.
-- Log level: `--log-level` > configuration `logging.level` > `info`.
+- Configuration path: `--config` > `ABOUEI_CONFIG` > discovery defaults. Phase 1
+  accepts and records `--config` but does not read any source yet.
+- Log level: `--log-level` > configuration `logging.level` > `info`. Until the
+  configuration loader exists, the effective default is `info`.
 - Output: default `text`; only `json` selects structured mode. Other values are
   usage errors.
 - Global flags may appear before or after a subcommand where the framework
@@ -47,6 +49,10 @@ Precedence:
 
 `version` and `init` do not read YAML configuration. A supplied `--config` has no
 effect on those commands.
+
+Logs always go to stderr. The logger supports text and JSON handlers; Phase 1
+uses text by default because the CLI contract has no log-format flag and
+`logging.format` is not loaded until Phase 2.
 
 ## 3. Command Contracts
 
@@ -58,6 +64,9 @@ abouei-checker version [--output text|json]
 
 - Prints the binary name, version, commit, build date, Go version, and platform.
 - Does not read configuration, environment secrets, or SQLite.
+- Accepts global `--config` and `--log-level`; the config path has no effect and
+  the log level controls only the logger. A successful run emits one `DEBUG`
+  record to stderr when debug logging is enabled.
 - Human format:
   `abouei-checker dev (commit none, built unknown, go1.27.3 linux/amd64)`
 - JSON uses the envelope in [section 6](#6-json-output-contract).
@@ -211,6 +220,13 @@ Precedence for a single command result:
 ```text
 3 (internal) > 2 (usage/config) > 4 (notification) > 1 (unhealthy) > 0
 ```
+
+The shared implementation maps categories centrally: usage and configuration
+both use `2`, internal uses `3`, notification uses `4`, and unhealthy uses `1`.
+Unclassified errors default to internal. Cobra parse and argument-validation
+errors are classified as usage at the execution boundary. Commands that do not
+yet produce codes `1`, `4`, `130`, or `143` are covered by direct mapping tests;
+the constants exist but no command claims those outcomes prematurely.
 
 `monitor` uses only `0`, `2`, `3`, and forced signal codes during its lifetime.
 Per-backend health and delivery failures are operational events, not process
@@ -406,6 +422,8 @@ implementation. New `kind` values may be added without changing the envelope.
   framework-level parse failures. This limitation is explicit.
 - Broken pipes or output write failures are internal errors (`3`) where the Go
   runtime allows the process to report them.
+- The CLI prints exactly one safe `Error:` line for failures and does not dump
+  usage or Cobra's own error output. Internal causes are not printed.
 
 ## 7. Help and Usage Conventions
 
@@ -432,6 +450,14 @@ implementation. New `kind` values may be added without changing the envelope.
 
 ## 9. Current Implementation Limitations
 
-Phase 0 implements root/help and `version` only. `--config`, `--log-level`, and
-all operational commands are planned. The presence of this contract does not
-mean those commands are available.
+Phase 1 implements root/help, `version`, the global `--config`, `--log-level`,
+and `--output` flags, the shared logging foundation, and centralized error
+mapping. `--config` is accepted but not read, and no YAML loader, configuration
+source, SQLite store, probe, scheduler, or operational command exists yet.
+
+The roadmap mentions a possible `--version` convenience flag. The CLI contract
+defines the `version` command as the build-metadata interface, so Phase 1 retains
+that command and does not add an undocumented flag. The presence of this contract
+does not mean planned commands are available.
+
+All operational commands remain planned and must not be advertised as usable.

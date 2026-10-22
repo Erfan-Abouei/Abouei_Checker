@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 quality baseline; most suites are planned |
+| Status | Phase 1 shared-foundation tests implemented; later feature suites planned |
 | Go toolchain | 1.27.3 |
 | Related | [Architecture](architecture.md), [Release checklist](release-checklist.md), [Security](security.md) |
 
@@ -31,6 +31,7 @@ after it was actually executed in the stated environment.
 | `make lint` | Run `golangci-lint` with the pinned config |
 | `make test` | Run unit tests |
 | `make test-race` | Run tests with the race detector |
+| `go test -race -shuffle=on -count=1 ./...` | Run race tests with randomized order |
 | `make cover` | Generate `coverage.out` with atomic mode and race detection |
 | `make cover-check` | Enforce the coverage floor |
 | `make vuln` | Run `govulncheck ./...` |
@@ -74,6 +75,9 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
 | --- | --- | --- | --- |
 | Build metadata | Version/commit/date defaults, platform, JSON/text output | Unit tests with injected values | 0 (done) |
 | CLI framework | Root help, unknown commands, flag validation, exit mapping, broken writers | Unit tests with buffers | 0 (done) |
+| CLI global foundation | `--config`, `--log-level`, `--output`, flag inheritance/defaults, help, stdout/stderr, safe error rendering | In-process command execution with injected writers and app factory | 1 (done) |
+| Logging and redaction | Four levels, text/JSON handlers, UTC timestamps, stable fields, registered secrets, credential-shaped strings, error paths, concurrent use | Injected buffers and redactor tests | 1 (done) |
+| Error model | Categories, stable codes, safe messages, wrapped causes, central exit mapping | Direct unit tests and table-driven mapping | 1 (done) |
 | Configuration discovery | Explicit path, env override, defaults, no fallback, missing file | Temp directories; `t.Setenv` | 2 |
 | Configuration schema | Required fields, unknown fields, duplicate keys, versions, limits, defaults inheritance | Table-driven decode/validate tests | 2 |
 | Secrets | `${NAME}` expansion, embedding, `$$`, missing/empty, redaction in errors/JSON/logs | Unit tests with fake env and captured writers | 2 |
@@ -128,9 +132,9 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
 
 ## 6. Coverage Policy
 
-- Phase 0 floor: **60% overall**, enforced by `scripts/check-coverage.sh`.
-- The Phase 0 scaffold measured above this floor with focused CLI/build-info
-  tests; the exact result is recorded in the Phase 0 report.
+- Phase 0/1 floor: **60% overall**, enforced by `scripts/check-coverage.sh`.
+- Phase 1 measured 89.4% overall; the exact command output is in the Phase 1
+  completion report.
 - Ratchet as implementation lands:
   - Phase 2: at least 70%.
   - Phase 3: at least 75%.
@@ -272,7 +276,9 @@ Prohibited claims:
 - "No vulnerabilities" when the vulnerability database was unreachable.
 - "Docker validated" when only the Dockerfile was reviewed.
 
-## 14. Phase 0 Evidence Summary
+## 14. Evidence Summary
+
+### Phase 0
 
 The Phase 0 report records actual results for:
 
@@ -287,6 +293,26 @@ The Phase 0 report records actual results for:
 - `actionlint`
 - `git diff --check`
 
-`govulncheck` is blocked locally by the environment's HTTP 403 response from
-`vuln.go.dev`; CI execution is pending a push. CodeQL and the GitHub Actions
-workflow likewise cannot execute until the branch is pushed.
+`govulncheck` was blocked locally by the environment's HTTP 403 response from
+`vuln.go.dev`; CI execution was pending the first push. CodeQL and the GitHub
+Actions workflow likewise could not execute until the repository was pushed.
+
+### Phase 1
+
+The Phase 1 report records actual local and remote results, including:
+
+- `gofmt -l cmd internal` (no output) and `go vet ./...`;
+- `go test -race -count=1 ./...` and
+  `go test -race -shuffle=on -count=1 ./...`;
+- coverage generation and the 60% gate;
+- `golangci-lint run ./...`;
+- `make check`, `make build`, and `make cross-build`;
+- text/JSON version smoke tests, debug stdout/stderr separation, and usage-error
+  exit codes;
+- `git diff --check`;
+- GitHub Actions CI and CodeQL runs on pull request #1.
+
+`make verify` cannot complete locally because `govulncheck` receives HTTP 403
+from `vuln.go.dev`. The GitHub CI `Quality and tests` job executed the pinned
+`govulncheck` step successfully, so that gap is closed remotely but is never
+reported as a local pass.
