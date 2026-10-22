@@ -4,13 +4,14 @@ AboueiChecker (`abouei-checker`) is an open-source Go CLI for monitoring backend
 HTTP health endpoints, detecting outages and recoveries, keeping local SQLite
 history, and sending configurable generic webhook notifications.
 
-> **Project status: Phase 1 shared foundation complete.**
+> **Project status: Phase 2 configuration complete.**
 >
-> `abouei-checker version`, root/command help, global `--config`/`--log-level`
-> flags, structured logging, and centralized exit-code mapping are implemented.
-> Configuration loading, monitoring commands, HTTP probing, SQLite, and webhooks
-> are specified but **not yet available**. Do not use this repository for
-> production monitoring yet.
+> `abouei-checker version`, `init`, `validate`, root/command help, global
+> `--config`/`--log-level` flags, strict YAML loading, defaults/inheritance,
+> environment-reference resolution, validation, structured logging, and
+> centralized exit-code mapping are implemented. Monitoring commands, HTTP
+> probing, SQLite, incidents, and webhooks are specified but **not yet
+> available**. Do not use this repository for production monitoring yet.
 
 ## Why AboueiChecker
 
@@ -39,21 +40,25 @@ distributed observability system.
 | Capability | Status |
 | --- | --- |
 | `version` (text and JSON) | Implemented |
+| `init` configuration template | Implemented |
+| `validate` configuration | Implemented |
 | Root help and command help | Implemented |
 | Global `--config`, `--log-level`, `--output` flags | Implemented |
+| YAML loading, discovery, defaults, and validation | Implemented |
+| Environment-reference expansion and redaction registration | Implemented |
 | Structured logging and redaction foundation | Implemented |
 | Shared error categories and exit-code mapping | Implemented |
-| `init`, `validate` | Planned — not available |
 | `check`, `monitor` | Planned — not available |
 | `status`, `history` | Planned — not available |
-| YAML configuration loading | Planned — not available |
 | HTTP probing and scheduling | Planned — not available |
 | Incidents, webhooks, retries | Planned — not available |
 | SQLite persistence and migrations | Planned — not available |
 | Release binaries and container releases | Not published |
 
-`--config` is accepted by every command in Phase 1, but the path is only recorded
-for the Phase 2 loader; no file is read yet.
+`--config` selects an explicit file; when it is omitted, `ABOUEI_CONFIG`,
+`./abouei.yaml`, and the platform user configuration directory are searched in
+that order. `validate` reads and validates configuration but never probes an
+endpoint, opens SQLite, or sends a notification.
 
 The detailed behavior contracts are complete even where implementation is
 pending:
@@ -70,6 +75,7 @@ pending:
 - [Release checklist](docs/release-checklist.md)
 - [Phase 0 completion report](docs/phase-0-completion.md)
 - [Phase 1 completion report](docs/phase-1-completion.md)
+- [Phase 2 completion report](docs/phase-2-completion.md)
 - [Architecture decisions](docs/decisions/README.md)
 
 ## Installation (Current Phase)
@@ -115,33 +121,36 @@ Current commands:
 abouei-checker version
 abouei-checker version --output json
 abouei-checker version --log-level debug
-abouei-checker --config ./abouei.yaml version   # path accepted; not loaded yet
+abouei-checker init
+abouei-checker init ./config/abouei.yaml
+abouei-checker init ./abouei.yaml --force
+abouei-checker validate
+abouei-checker validate --config ./abouei.yaml
+abouei-checker validate --config ./abouei.yaml --output json
 abouei-checker help
-abouei-checker version --help
+abouei-checker validate --help
 ```
 
 `--log-level` accepts `debug`, `info`, `warn`, and `error` case-insensitively.
-Logs go to stderr; `--output json` keeps stdout machine-readable.
+An explicit flag overrides `logging.level`; otherwise configuration supplies the
+level and format. Logs go to stderr; `--output json` keeps stdout
+machine-readable.
 
 Planned command surface (not yet usable):
 
 | Command | Intended purpose |
 | --- | --- |
-| `init [PATH]` | Create a commented configuration template |
-| `validate` | Validate configuration and secret references without network or database access |
 | `check [BACKEND_ID...]` | Probe selected backends once, persist state, attempt due notifications, and exit |
 | `monitor` | Run continuous scheduling, notifications, and graceful shutdown |
 | `status` | Read current backend and incident state from SQLite |
 | `history` | Read observations and incident transitions from SQLite |
-| `version` | Print build metadata (implemented) |
 
 The exact flags, output, and exit semantics are in the
 [CLI contract](docs/cli-contract.md).
 
-## Configuration (Proposed)
+## Configuration
 
-YAML will be the single configuration source of truth. The loader is a Phase 2
-deliverable; the current binary does not read this file. A safe minimal example:
+YAML is the single configuration source of truth. A safe minimal example:
 
 ```yaml
 version: 1
@@ -161,10 +170,19 @@ backends:
       enabled: false
 ```
 
-A fuller proposed example is in
-[examples/abouei.yaml](examples/abouei.yaml). The canonical schema, defaults,
-validation rules, and environment-reference behavior are in
-[configuration.md](docs/configuration.md).
+`abouei-checker init` writes a commented template that is valid immediately.
+`abouei-checker validate` loads and validates a file without network or database
+access. A fuller example is in [examples/abouei.yaml](examples/abouei.yaml). The
+canonical schema, defaults, validation rules, and environment-reference behavior
+are in [configuration.md](docs/configuration.md).
+
+Discovery order is `--config`, `ABOUEI_CONFIG`, `./abouei.yaml`, then
+`<user-config-dir>/abouei-checker/config.yaml`. Explicit sources never fall back.
+The file must be a regular file; symbolic links are rejected. Relative database
+paths resolve against the directory containing the configuration file.
+
+Fields for probing, incidents, persistence, and webhook delivery are validated
+now but have no runtime effect until their phases are implemented.
 
 ### Secrets
 
@@ -264,11 +282,12 @@ verification requirements.
 
 ## Quality and Security
 
-Phase 1 keeps formatting, vet, lint, unit tests, race detection, coverage gating,
-cross-build verification, CI, CodeQL, Dependabot, and a pinned `govulncheck`
-workflow. The local environment cannot reach `vuln.go.dev` (HTTP 403); this is
-reported as blocked rather than a pass. GitHub CI and CodeQL results are recorded
-separately in the [Phase 1 completion report](docs/phase-1-completion.md).
+Phase 2 keeps formatting, vet, lint, unit tests, race detection, a 70% coverage
+gate, cross-build verification, CI, CodeQL, Dependabot, and a pinned
+`govulncheck` workflow. The local environment cannot reach `vuln.go.dev` (HTTP
+403); this is reported as blocked rather than a pass. GitHub CI and CodeQL
+results are recorded separately in the
+[Phase 2 completion report](docs/phase-2-completion.md).
 
 Security reporting: use GitHub private vulnerability reporting as described in
 [SECURITY.md](SECURITY.md). Do not open a public issue with exploit details or
@@ -292,10 +311,11 @@ real credentials.
 ## Roadmap
 
 Phase 0 delivered the foundation. Phase 1 implements the shared CLI, logging,
-redaction, and error foundation; Phase 2 adds configuration; Phase 3 the
-probe/scheduler; Phase 4 incidents, durable state, and webhooks; Phase 5 history
-and recovery; Phase 6 integrated reliability/security; Phase 7 release
-validation. The dependency adjustment that pulls the incident/outbox store slice
+redaction, and error foundation; Phase 2 adds strict YAML configuration, `init`,
+and `validate`; Phase 3 the probe/scheduler; Phase 4 incidents, durable state, and
+webhooks; Phase 5 history and recovery; Phase 6 integrated
+reliability/security; Phase 7 release validation. The dependency adjustment that
+pulls the incident/outbox store slice
 into Phase 4 is documented in the
 [roadmap](docs/roadmap.md#dependency-adjustment-for-persistence).
 

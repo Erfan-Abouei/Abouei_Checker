@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 complete; Phase 1 implemented and verified (PR #1 open for review); Phases 2–7 pending |
+| Status | Phase 0 and 1 complete; Phase 2 implemented and locally verified; Phases 3–7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -75,10 +75,9 @@ bootstrap, tooling, CI, Docker design, and handoff.
 
 ## 3. Phase 1 — Project Foundation Implementation
 
-**Status:** Implemented on `feature/phase-1-project-foundation`, pushed as pull
-request #1, with GitHub CI and CodeQL passing. Not merged into `develop`; review
-is pending. Evidence is recorded in the
-[Phase 1 completion report](phase-1-completion.md).
+**Status:** Implemented on `feature/phase-1-project-foundation`, merged into
+`develop` through pull request #1 with GitHub CI and CodeQL passing. Evidence is
+recorded in the [Phase 1 completion report](phase-1-completion.md).
 
 ### Objective
 
@@ -122,6 +121,9 @@ later commands, without implementing monitoring behavior.
 - Documentation continues to label unimplemented commands as planned.
 
 ## 4. Phase 2 — Configuration & Backend Registry
+
+**Status:** Implemented on `feature/phase-2-configuration`. Evidence is recorded
+in the [Phase 2 completion report](phase-2-completion.md).
 
 ### Objective
 
@@ -386,17 +388,19 @@ release.
 
 ## 12. Recommended Next Task
 
-**Phase 1 — Project Foundation Implementation.**
+**Phase 3 — Health Probe & Monitoring Engine.**
 
 Scope:
 
-- global CLI flags and shared error/exit conventions;
-- `log/slog` foundation with safe field conventions;
-- build metadata consistency;
-- app composition skeleton;
-- CI execution on a branch;
-- documentation updates.
+- safe HTTP client with timeout, TLS verification, response limits, redirect
+  policy, header handling, and no implicit proxy;
+- accepted-status and `contains`/RE2 body matching evaluation;
+- normalized probe results and failure reasons;
+- per-backend scheduler with no overlapping probes;
+- global concurrency semaphore and cancellation;
+- `httptest` coverage for status, body, timeout, malformed response, oversized
+  body, redirect, and TLS failure cases.
 
-Do not implement configuration loading, probing, incidents, notifications,
-SQLite, or operational commands in Phase 1 beyond what is necessary to prove the
-shared foundation.
+Phase 3 consumes the immutable configuration from `internal/config`; it does not
+reload or mutate YAML. Do not implement incidents, SQLite, notifications, or
+operational commands beyond the Phase 3 scope.

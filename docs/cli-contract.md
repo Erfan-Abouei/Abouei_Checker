@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 1 contract; `version`, root help, and global flags implemented |
+| Status | Phase 2; `version`, `init`, `validate`, root help, and global flags implemented |
 | Executable | `abouei-checker` |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md) |
 
@@ -15,8 +15,8 @@ not be advertised as usable.
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `version` | Implemented | Print build metadata |
-| `init` | Planned | Write a commented configuration template |
-| `validate` | Planned | Load, resolve, and validate configuration without network or database access |
+| `init` | Implemented | Write a commented configuration template |
+| `validate` | Implemented | Load, resolve, and validate configuration without network or database access |
 | `check` | Planned | Probe each selected backend once, persist state, attempt due notifications, and exit |
 | `monitor` | Planned | Continuously schedule probes and notifications until graceful shutdown |
 | `status` | Planned | Read current backend and incident state from SQLite |
@@ -30,29 +30,31 @@ unknown command or flag is a usage error and exits `2`.
 
 | Flag | Status | Default | Behavior |
 | --- | --- | --- | --- |
-| `--config PATH` | Implemented (Phase 1) | discovery | Accept an explicit YAML configuration file. Phase 1 records the path; the loader is implemented in Phase 2. |
-| `--output text\|json` | Implemented for `version`; planned globally | `text` | Select human-readable or structured output |
-| `--log-level LEVEL` | Implemented (Phase 1) | `info` until configuration exists | Override `logging.level` case-insensitively; values are `debug`, `info`, `warn`, `error` |
+| `--config PATH` | Implemented | discovery | Accept an explicit YAML configuration file. Used by `validate` and future operational commands. |
+| `--output text\|json` | Implemented | `text` | Select human-readable or structured output |
+| `--log-level LEVEL` | Implemented | `info` until configuration is loaded | Override `logging.level` case-insensitively; values are `debug`, `info`, `warn`, `error` |
 | `--help`, `-h` | Implemented | — | Show help for the root or a subcommand |
 | `help [COMMAND]` | Implemented via Cobra | — | Show command help |
 
 Precedence:
 
-- Configuration path: `--config` > `ABOUEI_CONFIG` > discovery defaults. Phase 1
-  accepts and records `--config` but does not read any source yet.
-- Log level: `--log-level` > configuration `logging.level` > `info`. Until the
-  configuration loader exists, the effective default is `info`.
+- Configuration path: `--config` > `ABOUEI_CONFIG` > discovery defaults.
+- Log level: `--log-level` > configuration `logging.level` > `info`. The flag
+  only overrides configuration when it is supplied explicitly.
+- Log format: configuration `logging.format`; there is no log-format flag.
 - Output: default `text`; only `json` selects structured mode. Other values are
   usage errors.
 - Global flags may appear before or after a subcommand where the framework
   permits. Scripts should prefer the documented position after the command.
 
 `version` and `init` do not read YAML configuration. A supplied `--config` has no
-effect on those commands.
+effect on those commands. `validate` loads configuration and therefore honors
+`--config`, `ABOUEI_CONFIG`, discovery, and `logging.level`/`logging.format`.
 
-Logs always go to stderr. The logger supports text and JSON handlers; Phase 1
-uses text by default because the CLI contract has no log-format flag and
-`logging.format` is not loaded until Phase 2.
+Logs always go to stderr. The logger supports text and JSON handlers. The log
+format comes from configuration `logging.format` when configuration is loaded;
+there is no log-format flag. Before configuration is loaded (for example in
+`version` and `init`), text is used.
 
 ## 3. Command Contracts
 
@@ -73,7 +75,7 @@ abouei-checker version [--output text|json]
 - Extra positional arguments are a usage error (exit `2`).
 - Output write failure is an internal error (exit `3`).
 
-### 3.2 `init` (planned)
+### 3.2 `init` (implemented)
 
 ```text
 abouei-checker init [PATH] [--force]
@@ -81,14 +83,19 @@ abouei-checker init [PATH] [--force]
 
 - Writes a commented configuration template to `PATH`, defaulting to
   `./abouei.yaml`.
-- Creates parent directories only if they are safe to create; it does not create
-  a database.
-- Refuses to overwrite an existing file unless `--force` is supplied.
-- Does not resolve secret variables, probe endpoints, or open SQLite.
+- Creates parent directories with owner-only permissions where supported.
+- New files use owner-only permissions (`0600`) where the platform supports
+  them. It does not create a database.
+- Refuses to overwrite an existing file unless `--force` is supplied. It rejects
+  directory and symbolic-link targets.
+- Does not read configuration, resolve secret variables, probe endpoints, or
+  open SQLite.
+- Text output is `created PATH` or `overwrote PATH`. JSON data is
+  `{"path": string, "overwritten": bool}` inside the standard envelope.
 - Exit: `0` created or force-overwritten; `2` invalid path or existing file
   without `--force`; `3` filesystem write failure.
 
-### 3.3 `validate` (planned)
+### 3.3 `validate` (implemented)
 
 ```text
 abouei-checker validate [--output text|json]
@@ -96,11 +103,18 @@ abouei-checker validate [--output text|json]
 
 - Discovers/loads the configuration, expands environment references, applies
   defaults, and runs all schema and cross-field validation.
-- Does not contact endpoints, open SQLite, or deliver notifications.
+- Does not contact endpoints, open SQLite, or deliver notifications. It does not
+  create the database directory or file.
 - Prints a safe summary: config schema version, backend count, and backend IDs.
-  It never prints resolved header values, tokens, or the full file.
+  It never prints resolved header values, tokens, URLs, or the full file.
+- Text mode writes the summary to stdout. JSON mode writes the standard envelope
+  with `{"valid": true, "config_version": 1, "backend_count": N,
+  "backend_ids": [...]}` as `data`.
 - Exit: `0` valid; `2` missing/invalid configuration or missing secret variable;
   `3` unexpected internal failure.
+- On failure in JSON mode, stdout contains one valid JSON error envelope with a
+  stable `code` and safe `details`, and stderr contains exactly one `Error:`
+  line.
 
 ### 3.4 `check` (planned)
 
@@ -314,6 +328,15 @@ Error object:
 }
 ```
 
+`init`:
+
+```json
+{
+  "path": "./abouei.yaml",
+  "overwritten": false
+}
+```
+
 `check`:
 
 ```json
@@ -415,6 +438,10 @@ implementation. New `kind` values may be added without changing the envelope.
 
 - In JSON mode, stdout contains only JSON. Logs, progress, warnings, and
   diagnostics go to stderr.
+- When `--output json` has been parsed, a command failure writes one JSON error
+  envelope to stdout (`status: "error"`, `data: null`, safe `error`) and exactly
+  one `Error:` line to stderr. Invalid configuration details are limited to safe
+  field paths and rule descriptions.
 - Human-readable output may use tables and plain text. ANSI color is not part of
   the v1 contract.
 - If an error occurs before `--output` is parsed, the process may emit only a
@@ -450,14 +477,18 @@ implementation. New `kind` values may be added without changing the envelope.
 
 ## 9. Current Implementation Limitations
 
-Phase 1 implements root/help, `version`, the global `--config`, `--log-level`,
-and `--output` flags, the shared logging foundation, and centralized error
-mapping. `--config` is accepted but not read, and no YAML loader, configuration
-source, SQLite store, probe, scheduler, or operational command exists yet.
+Phase 2 implements root/help, `version`, `init`, `validate`, the global
+`--config`, `--log-level`, and `--output` flags, strict version-1 YAML loading,
+environment expansion, validation, defaults/inheritance, secret registration,
+the shared logging foundation, and centralized error mapping.
+
+The operational commands `check`, `monitor`, `status`, and `history` remain
+planned. No SQLite store, probe engine, scheduler, incident state machine,
+webhook delivery, or retention job exists yet. Configuration fields that belong
+to those phases are validated but have no runtime effect.
 
 The roadmap mentions a possible `--version` convenience flag. The CLI contract
-defines the `version` command as the build-metadata interface, so Phase 1 retains
-that command and does not add an undocumented flag. The presence of this contract
-does not mean planned commands are available.
+defines the `version` command as the build-metadata interface, so it does not add
+an undocumented flag.
 
-All operational commands remain planned and must not be advertised as usable.
+Planned commands are not registered and must not be advertised as usable.

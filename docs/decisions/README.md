@@ -11,6 +11,7 @@ technical question within those requirements.
 | [0003](0003-webhook-delivery-and-idempotency.md) | Webhook delivery, outbox, and idempotency | Accepted |
 | [0004](0004-secret-resolution-and-redaction.md) | Secret references and redaction | Accepted |
 | [0005](0005-logging-error-boundaries.md) | Phase 1 logging, redaction, and error boundaries | Accepted |
+| [0006](0006-yaml-decoder-and-config-schema.md) | YAML decoder, configuration schema freeze, and loader boundaries | Accepted |
 
 ## Status meanings
 

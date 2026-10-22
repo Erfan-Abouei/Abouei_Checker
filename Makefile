@@ -7,7 +7,7 @@ GO ?= go
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-COVERAGE_MIN ?= 60
+COVERAGE_MIN ?= 70
 
 LDFLAGS := -s -w \
 	-X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
