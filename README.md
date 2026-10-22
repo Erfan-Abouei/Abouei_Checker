@@ -4,17 +4,19 @@ AboueiChecker (`abouei-checker`) is an open-source Go CLI for monitoring backend
 HTTP health endpoints, detecting outages and recoveries, keeping local SQLite
 history, and sending configurable generic webhook notifications.
 
-> **Project status: Phase 2 configuration complete.**
+> **Project status: Phase 3 health probe and monitoring complete (in-memory).**
 >
 > **Release status:** `main` intentionally contains no production release yet.
 > Active implementation and verification continue on the `develop` branch.
 >
-> `abouei-checker version`, `init`, `validate`, root/command help, global
-> `--config`/`--log-level` flags, strict YAML loading, defaults/inheritance,
-> environment-reference resolution, validation, structured logging, and
-> centralized exit-code mapping are implemented. Monitoring commands, HTTP
-> probing, SQLite, incidents, and webhooks are specified but **not yet
-> available**. Do not use this repository for production monitoring yet.
+> `abouei-checker version`, `init`, `validate`, `check`, and `monitor`,
+> root/command help, global `--config`/`--log-level` flags, strict YAML
+> loading, defaults/inheritance, environment-reference resolution, validation,
+> structured logging, redaction, centralized exit-code mapping, the safe HTTP
+> probe engine, and the per-backend scheduler are implemented. `check` and
+> `monitor` keep threshold streaks in memory only: SQLite, incidents, and
+> webhooks are specified but **not yet available**. Do not use this repository
+> for production monitoring yet.
 
 ## Why AboueiChecker
 
@@ -52,9 +54,9 @@ distributed observability system.
 | Environment-reference expansion and redaction registration | Implemented |
 | Structured logging and redaction foundation | Implemented |
 | Shared error categories and exit-code mapping | Implemented |
-| `check`, `monitor` | Planned — not available |
+| `check`, `monitor` | Implemented (in-memory threshold state; no SQLite, incidents, or webhooks yet) |
 | `status`, `history` | Planned — not available |
-| HTTP probing and scheduling | Planned — not available |
+| HTTP probing and scheduling | Implemented |
 | Incidents, webhooks, retries | Planned — not available |
 | SQLite persistence and migrations | Planned — not available |
 | Release binaries and container releases | Not published |
@@ -80,6 +82,7 @@ pending:
 - [Phase 0 completion report](docs/phase-0-completion.md)
 - [Phase 1 completion report](docs/phase-1-completion.md)
 - [Phase 2 completion report](docs/phase-2-completion.md)
+- [Phase 3 completion report](docs/phase-3-completion.md)
 - [Architecture decisions](docs/decisions/README.md)
 
 ## Installation (Current Phase)
@@ -307,12 +310,12 @@ verification requirements.
 
 ## Quality and Security
 
-Phase 2 keeps formatting, vet, lint, unit tests, race detection, a 70% coverage
+Phase 3 keeps formatting, vet, lint, unit tests, race detection, a 75% coverage
 gate, cross-build verification, CI, CodeQL, Dependabot, and a pinned
 `govulncheck` workflow. The local environment cannot reach `vuln.go.dev` (HTTP
 403); this is reported as blocked rather than a pass. GitHub CI and CodeQL
 results are recorded separately in the
-[Phase 2 completion report](docs/phase-2-completion.md).
+[Phase 3 completion report](docs/phase-3-completion.md).
 
 Security reporting: use GitHub private vulnerability reporting as described in
 [SECURITY.md](SECURITY.md). Do not open a public issue with exploit details or
@@ -335,11 +338,12 @@ real credentials.
 
 ## Roadmap
 
-Phase 0 delivered the foundation. Phase 1 implements the shared CLI, logging,
-redaction, and error foundation; Phase 2 adds strict YAML configuration, `init`,
-and `validate`; Phase 3 the probe/scheduler; Phase 4 incidents, durable state, and
-webhooks; Phase 5 history and recovery; Phase 6 integrated
-reliability/security; Phase 7 release validation. The dependency adjustment that
+Phase 0 delivered the foundation. Phase 1 implemented the shared CLI, logging,
+redaction, and error foundation; Phase 2 added strict YAML configuration,
+`init`, and `validate`; Phase 3 added the safe HTTP probe engine, one-shot
+`check`, continuous `monitor`, and in-memory threshold streaks; Phase 4 adds
+incidents, durable state, and webhooks; Phase 5 history and recovery; Phase 6
+integrated reliability/security; Phase 7 release validation. The dependency adjustment that
 pulls the incident/outbox store slice
 into Phase 4 is documented in the
 [roadmap](docs/roadmap.md#dependency-adjustment-for-persistence).

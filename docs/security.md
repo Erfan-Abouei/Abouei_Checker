@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 2 configuration loading, expansion, and redaction registration implemented; remaining controls in later phases |
+| Status | Phase 3 probe/scheduler controls implemented; `check`/`monitor` enforce timeouts, response limits, redirect policy, and redaction. Webhook, persistence, and restart controls remain in later phases |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md), [Testing](testing-and-quality.md) |
 
 Security is a release gate, not a Phase 0 claim. This document defines the
