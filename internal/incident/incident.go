@@ -78,6 +78,12 @@ func Evaluate(
 	openIncidentID string,
 	now time.Time,
 ) Outcome {
+	if result.ObservedAt.IsZero() {
+		result.ObservedAt = now
+		if result.ObservedAt.IsZero() {
+			result.ObservedAt = time.Now().UTC()
+		}
+	}
 	if result.Outcome == probe.OutcomeCanceled {
 		return Outcome{Streaks: streaks, Transition: TransitionNone}
 	}
@@ -99,9 +105,6 @@ func evaluateFailed(
 	}
 	if streaks.Failures == 0 {
 		updated.FirstFailureAt = result.ObservedAt
-		if updated.FirstFailureAt.IsZero() {
-			updated.FirstFailureAt = time.Now().UTC()
-		}
 	} else {
 		updated.FirstFailureAt = streaks.FirstFailureAt
 	}

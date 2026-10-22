@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -240,7 +241,7 @@ func TestClaimOrderingAndDeadSkipping(t *testing.T) {
 		t.Fatalf("claim = %+v", first)
 	}
 	// A second claim finds nothing: the Down row is delivering.
-	if _, err := store.ClaimDueEvent(ctx, now); err != sql.ErrNoRows {
+	if _, err := store.ClaimDueEvent(ctx, now); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("want ErrNoRows while delivering, got %v", err)
 	}
 	// Dead rows never block later sequences.
@@ -329,7 +330,7 @@ func TestMarkFailedSchedulesRetry(t *testing.T) {
 	if err := store.MarkFailed(ctx, claimed.ID, next, "webhook returned status 500"); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
-	if _, err := store.ClaimDueEvent(ctx, now); err != sql.ErrNoRows {
+	if _, err := store.ClaimDueEvent(ctx, now); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("not due before backoff, got %v", err)
 	}
 	again, err := store.ClaimDueEvent(ctx, next)

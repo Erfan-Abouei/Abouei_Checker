@@ -16,6 +16,9 @@ import (
 	"strings"
 	"time"
 
+	// Register the pure-Go SQLite driver for database/sql. This is the only
+	// blank import in non-test code: it wires the approved storage engine
+	// without exposing the driver package to the rest of the program.
 	_ "modernc.org/sqlite"
 )
 

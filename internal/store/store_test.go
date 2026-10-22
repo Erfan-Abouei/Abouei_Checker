@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,8 +126,8 @@ func TestOpenRejectsNewerSchema(t *testing.T) {
 	}
 	_ = store.Close()
 	_, err = Open(path)
-	openErr, ok := err.(*OpenError)
-	if !ok || openErr.Reason != "schema_newer" {
+	var openErr *OpenError
+	if !errors.As(err, &openErr) || openErr.Reason != "schema_newer" {
 		t.Fatalf("want schema_newer, got %#v", err)
 	}
 }
@@ -150,8 +151,8 @@ func TestOpenRejectsInconsistentVersionZero(t *testing.T) {
 	}
 	_ = db.Close()
 	_, err = Open(path)
-	openErr, ok := err.(*OpenError)
-	if !ok || openErr.Reason != "schema_inconsistent" {
+	var openErr *OpenError
+	if !errors.As(err, &openErr) || openErr.Reason != "schema_inconsistent" {
 		t.Fatalf("want schema_inconsistent, got %#v", err)
 	}
 }

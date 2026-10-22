@@ -71,13 +71,13 @@ type ReminderInfo struct {
 
 // PayloadInput carries everything needed to encode one event.
 type PayloadInput struct {
-	EventID     string
-	EventType   string
-	Sequence    int
-	OccurredAt  time.Time
-	Backend     BackendRef
-	Incident    IncidentSnapshot
-	ReminderAt  *time.Time
+	EventID    string
+	EventType  string
+	Sequence   int
+	OccurredAt time.Time
+	Backend    BackendRef
+	Incident   IncidentSnapshot
+	ReminderAt *time.Time
 }
 
 // payload is the wire encoding of PayloadInput.
@@ -161,6 +161,9 @@ const (
 // nil error with status 0 (e.g., a redirect blocked by policy) is permanent.
 func Classify(statusCode int, err error) Verdict {
 	if err != nil {
+		if isRedirectBlocked(err) {
+			return VerdictPermanent
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return VerdictRetryable
 		}
@@ -221,7 +224,11 @@ func BackoffDelay(attempt int, initial, maximum time.Duration, jitter func(n int
 }
 
 var (
-	jitterMu     sync.Mutex
+	jitterMu sync.Mutex
+	// jitterSource is a locked math/rand source used only for retry jitter;
+	// it never generates secrets or identity values (those use crypto/rand).
+	//
+	//nolint:gosec // jitter timing is not security-sensitive.
 	jitterSource = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
 

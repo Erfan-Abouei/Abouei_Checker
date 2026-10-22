@@ -28,6 +28,8 @@ type ProcessOutcome struct {
 	// Failures and Successes are the persisted streaks after the probe.
 	Failures  int
 	Successes int
+	// FailureThreshold is the configured consecutive-failure threshold.
+	FailureThreshold int
 	// FirstFailureAt is the active streak start, or zero when cleared.
 	FirstFailureAt time.Time
 	// Transition classifies the incident change.
@@ -156,12 +158,13 @@ func (s *Store) processInTx(
 	}
 
 	outcome := ProcessOutcome{
-		ObservationID:  observationID,
-		Failures:       decision.Streaks.Failures,
-		Successes:      decision.Streaks.Successes,
-		FirstFailureAt: decision.Streaks.FirstFailureAt,
-		Transition:     decision.Transition,
-		IncidentStatus: IncidentNone,
+		ObservationID:    observationID,
+		Failures:         decision.Streaks.Failures,
+		Successes:        decision.Streaks.Successes,
+		FailureThreshold: backend.FailureThreshold,
+		FirstFailureAt:   decision.Streaks.FirstFailureAt,
+		Transition:       decision.Transition,
+		IncidentStatus:   IncidentNone,
 	}
 
 	switch decision.Transition {

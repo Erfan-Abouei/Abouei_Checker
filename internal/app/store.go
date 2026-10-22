@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/store"
 )
@@ -22,8 +23,8 @@ func (a *App) OpenStore() (*store.Store, error) {
 }
 
 func classifyStoreError(err error) *Error {
-	openErr, ok := err.(*store.OpenError)
-	if !ok {
+	var openErr *store.OpenError
+	if !errors.As(err, &openErr) {
 		return WrapError(CategoryInternal, CodeDatabaseUnavailable, "monitoring database is unavailable", err)
 	}
 	switch openErr.Reason {
