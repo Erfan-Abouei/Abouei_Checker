@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed canonical schema for Phase 2; loader not implemented |
+| Status | Proposed canonical schema for Phase 2; loader not implemented (Phase 1) |
 | Schema version | `1` |
 | File format | YAML |
 | Related | [Requirements](requirements.md), [Security](security.md), [Persistence](persistence.md) |
@@ -10,7 +10,7 @@
 This is the canonical configuration contract. Other documents reference it
 instead of restating fields. The runtime loader is planned for Phase 2; the
 example below is a specification, not proof that configuration loading works in
-the current Phase 0 foundation.
+the current Phase 1 foundation.
 
 ## 1. Source of Truth
 
@@ -489,6 +489,6 @@ token is still redacted from logs and errors by the implementation. Prefer an
 
 ## 11. Implementation Status
 
-Phase 0 has not implemented this loader. The structured configuration example is
-a proposed contract for Phase 2. The current executable only supports `version`
-and does not read YAML or SQLite.
+Phase 1 has not implemented this loader. The structured configuration example is
+a proposed contract for Phase 2. The executable accepts `--config PATH` but does
+not read it; only `version` is implemented, and no YAML or SQLite is used.

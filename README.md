@@ -4,12 +4,13 @@ AboueiChecker (`abouei-checker`) is an open-source Go CLI for monitoring backend
 HTTP health endpoints, detecting outages and recoveries, keeping local SQLite
 history, and sending configurable generic webhook notifications.
 
-> **Project status: Phase 0 foundation complete.**
+> **Project status: Phase 1 shared foundation complete.**
 >
-> Only `abouei-checker version` and root/command help are implemented. The
-> monitoring commands, configuration loader, HTTP probe engine, SQLite store,
-> and webhook worker are specified but **not yet available**. Do not use this
-> repository for production monitoring yet.
+> `abouei-checker version`, root/command help, global `--config`/`--log-level`
+> flags, structured logging, and centralized exit-code mapping are implemented.
+> Configuration loading, monitoring commands, HTTP probing, SQLite, and webhooks
+> are specified but **not yet available**. Do not use this repository for
+> production monitoring yet.
 
 ## Why AboueiChecker
 
@@ -39,6 +40,9 @@ distributed observability system.
 | --- | --- |
 | `version` (text and JSON) | Implemented |
 | Root help and command help | Implemented |
+| Global `--config`, `--log-level`, `--output` flags | Implemented |
+| Structured logging and redaction foundation | Implemented |
+| Shared error categories and exit-code mapping | Implemented |
 | `init`, `validate` | Planned — not available |
 | `check`, `monitor` | Planned — not available |
 | `status`, `history` | Planned — not available |
@@ -47,6 +51,9 @@ distributed observability system.
 | Incidents, webhooks, retries | Planned — not available |
 | SQLite persistence and migrations | Planned — not available |
 | Release binaries and container releases | Not published |
+
+`--config` is accepted by every command in Phase 1, but the path is only recorded
+for the Phase 2 loader; no file is read yet.
 
 The detailed behavior contracts are complete even where implementation is
 pending:
@@ -62,6 +69,7 @@ pending:
 - [Roadmap](docs/roadmap.md)
 - [Release checklist](docs/release-checklist.md)
 - [Phase 0 completion report](docs/phase-0-completion.md)
+- [Phase 1 completion report](docs/phase-1-completion.md)
 - [Architecture decisions](docs/decisions/README.md)
 
 ## Installation (Current Phase)
@@ -106,9 +114,14 @@ Current commands:
 ```sh
 abouei-checker version
 abouei-checker version --output json
+abouei-checker version --log-level debug
+abouei-checker --config ./abouei.yaml version   # path accepted; not loaded yet
 abouei-checker help
 abouei-checker version --help
 ```
+
+`--log-level` accepts `debug`, `info`, `warn`, and `error` case-insensitively.
+Logs go to stderr; `--output json` keeps stdout machine-readable.
 
 Planned command surface (not yet usable):
 
@@ -181,9 +194,9 @@ The public contract defines:
 | `130` / `143` | Forced SIGINT / SIGTERM during continuous mode |
 
 In JSON mode, structured results are written to stdout and logs/diagnostics go to
-stderr. The `version` command already follows this discipline. The full JSON
-envelope and per-command data shapes are in
-[cli-contract.md](docs/cli-contract.md#6-json-output-contract).
+stderr. The `version` command already follows this discipline, including when
+debug logging is enabled. The full JSON envelope and per-command data shapes are
+in [cli-contract.md](docs/cli-contract.md#6-json-output-contract).
 
 ## Docker and Persistent Storage (Designed, Not Yet Operational)
 
@@ -211,7 +224,7 @@ docker run -d --name abouei-checker \
   abouei-checker:dev monitor
 ```
 
-This command is **not functional in Phase 0** because `monitor` and configuration
+This command is **not functional yet** because `monitor` and configuration
 loading are not implemented. The image's default command is `version` so the
 foundation can be smoke-tested safely. Backup and persistence details are in
 [docs/persistence.md](docs/persistence.md#9-docker-persistence).
@@ -251,11 +264,11 @@ verification requirements.
 
 ## Quality and Security
 
-Phase 0 includes formatting, vet, lint, unit tests, race detection, coverage
-gating, cross-build verification, CI, CodeQL, Dependabot, and a pinned
-`govulncheck` workflow. The local environment used for Phase 0 cannot reach
-`vuln.go.dev`; this is documented rather than reported as a pass. CI is configured
-but has not executed until the repository is pushed.
+Phase 1 keeps formatting, vet, lint, unit tests, race detection, coverage gating,
+cross-build verification, CI, CodeQL, Dependabot, and a pinned `govulncheck`
+workflow. The local environment cannot reach `vuln.go.dev` (HTTP 403); this is
+reported as blocked rather than a pass. GitHub CI and CodeQL results are recorded
+separately in the [Phase 1 completion report](docs/phase-1-completion.md).
 
 Security reporting: use GitHub private vulnerability reporting as described in
 [SECURITY.md](SECURITY.md). Do not open a public issue with exploit details or
@@ -274,16 +287,17 @@ real credentials.
 - Custom CA/client certificates or insecure TLS.
 - HTTP methods other than GET.
 - Configuration hot reload.
-- Release publication during Phase 0.
+- Release publication during Phase 0/1.
 
 ## Roadmap
 
-Phase 0 delivers the foundation. Phase 1 completes the shared CLI/logging/error
-foundation; Phase 2 adds configuration; Phase 3 the probe/scheduler; Phase 4
-incidents, durable state, and webhooks; Phase 5 history and recovery; Phase 6
-integrated reliability/security; Phase 7 release validation. The dependency
-adjustment that pulls the incident/outbox store slice into Phase 4 is documented
-in the [roadmap](docs/roadmap.md#dependency-adjustment-for-persistence).
+Phase 0 delivered the foundation. Phase 1 implements the shared CLI, logging,
+redaction, and error foundation; Phase 2 adds configuration; Phase 3 the
+probe/scheduler; Phase 4 incidents, durable state, and webhooks; Phase 5 history
+and recovery; Phase 6 integrated reliability/security; Phase 7 release
+validation. The dependency adjustment that pulls the incident/outbox store slice
+into Phase 4 is documented in the
+[roadmap](docs/roadmap.md#dependency-adjustment-for-persistence).
 
 ## Contributing and License
 

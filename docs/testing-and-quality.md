@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 quality baseline; most suites are planned |
+| Status | Phase 1 shared-foundation tests implemented; later feature suites planned |
 | Go toolchain | 1.27.3 |
 | Related | [Architecture](architecture.md), [Release checklist](release-checklist.md), [Security](security.md) |
 
@@ -31,6 +31,7 @@ after it was actually executed in the stated environment.
 | `make lint` | Run `golangci-lint` with the pinned config |
 | `make test` | Run unit tests |
 | `make test-race` | Run tests with the race detector |
+| `go test -race -shuffle=on -count=1 ./...` | Run race tests with randomized order |
 | `make cover` | Generate `coverage.out` with atomic mode and race detection |
 | `make cover-check` | Enforce the coverage floor |
 | `make vuln` | Run `govulncheck ./...` |
@@ -74,6 +75,9 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
 | --- | --- | --- | --- |
 | Build metadata | Version/commit/date defaults, platform, JSON/text output | Unit tests with injected values | 0 (done) |
 | CLI framework | Root help, unknown commands, flag validation, exit mapping, broken writers | Unit tests with buffers | 0 (done) |
+| CLI global foundation | `--config`, `--log-level`, `--output`, flag inheritance/defaults, help, stdout/stderr, safe error rendering | In-process command execution with injected writers and app factory | 1 (done) |
+| Logging and redaction | Four levels, text/JSON handlers, UTC timestamps, stable fields, registered secrets, credential-shaped strings, error paths, concurrent use | Injected buffers and redactor tests | 1 (done) |
+| Error model | Categories, stable codes, safe messages, wrapped causes, central exit mapping | Direct unit tests and table-driven mapping | 1 (done) |
 | Configuration discovery | Explicit path, env override, defaults, no fallback, missing file | Temp directories; `t.Setenv` | 2 |
 | Configuration schema | Required fields, unknown fields, duplicate keys, versions, limits, defaults inheritance | Table-driven decode/validate tests | 2 |
 | Secrets | `${NAME}` expansion, embedding, `$$`, missing/empty, redaction in errors/JSON/logs | Unit tests with fake env and captured writers | 2 |

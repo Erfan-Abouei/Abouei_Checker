@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 requirements baseline; controls are implemented in later phases |
+| Status | Phase 1 logging, redaction, and error controls implemented; remaining controls in later phases |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md), [Testing](testing-and-quality.md) |
 
 Security is a release gate, not a Phase 0 claim. This document defines the
@@ -237,18 +237,50 @@ Headers:
 ## 10. Logging and Error Handling
 
 - Use `log/slog` to stderr.
-- Levels: `DEBUG`, `INFO`, `WARN`, `ERROR`.
-- Safe fields include `backend_id`, `incident_id`, `event_id`, `duration_ms`,
-  `http_status`, `failure_reason`, `outcome`, and retry attempt counts.
+- Levels: `DEBUG`, `INFO`, `WARN`, `ERROR`; the CLI accepts them
+  case-insensitively.
+- Safe fields include `component`, `command`, `backend_id`, `incident_id`,
+  `event_id`, `operation`, `duration_ms`, `http_status`, `failure_reason`,
+  `outcome`, `attempt`, `error_category`, and `error_code`.
 - Never log header values, query strings, full URLs, bodies, or resolved env
   values.
 - Do not log the full configuration at startup. Log a summary such as backend
   count and config schema version.
 - Errors preserve causes internally (`%w`) but user/JSON messages are sanitized.
+  Expected failures use `internal/app.Error`, whose safe message is separate from
+  its wrapped cause.
 - Do not include stack traces in normal CLI output.
-- Exit codes distinguish usage/config (`2`), internal (`3`), unhealthy (`1`), and
-  notification failure (`4`). Security errors such as certificate failure are
-  failed probes, not internal crashes.
+- Exit codes distinguish usage/configuration (`2`), internal (`3`), unhealthy
+  (`1`), and notification failure (`4`). Security errors such as certificate
+  failure are failed probes, not internal crashes.
+
+### 10.1 Implemented safe-logging boundary
+
+Phase 1 implements the following boundary in `internal/logging`:
+
+1. **Structural allowlist (primary control).** Only documented safe field names
+   retain their values. An unknown field name keeps its name but its value becomes
+   `[REDACTED]`. Groups, maps, structs, slices, and non-error `any` values are
+   redacted rather than serialized.
+2. **Safe errors.** Errors implementing `SafeMessage() string` are rendered with
+   that message. Other errors are reduced to text and passed through the
+   redactor. Application errors never render their wrapped cause.
+3. **Registered secrets.** Resolved secret values are registered with
+   `Redactor.AddSecrets` and replaced literally and in query-escaped form. Phase
+   1 has no configuration loader, so the production registry starts empty; Phase
+   2 must register every resolved header, token, cookie, and environment value.
+4. **Pattern backstop.** URL-like strings render as scheme and host only.
+   Bearer/basic credentials, `Cookie`/`Set-Cookie`, query-secret parameters, and
+   named secret assignments are normalized. This is defense in depth, not a
+   guarantee.
+5. **Fixed output shape.** Timestamps are UTC RFC3339 with milliseconds. JSON
+   records are one object per line. The CLI injects stderr as the only log
+   destination.
+
+**Residual limitation:** arbitrary secret values embedded in arbitrary strings
+are not automatically detectable. Callers must not format raw request/response
+structures, must register resolved secrets, and must use safe errors and
+`logging.SafeURL`. Debug level never relaxes these rules.
 
 ## 11. SQLite and Local Data
 

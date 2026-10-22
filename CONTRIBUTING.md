@@ -110,10 +110,14 @@ observing its result.
 - Declare interfaces where they are consumed, not next to every implementation.
 - Return errors; do not call `os.Exit` outside `cmd/abouei-checker`.
 - Wrap errors with `%w` and preserve causes while keeping user messages safe.
+  Classify expected application failures with `internal/app.Error`; do not
+  duplicate exit-code mapping in commands.
 - Propagate `context.Context` through network, database, and long-running work.
 - Do not introduce global mutable state.
 - Avoid overlapping probes for the same backend.
-- Never log header values, bodies, resolved secrets, or secret-bearing URLs.
+- Never log header values, bodies, resolved secrets, or secret-bearing URLs. New
+  log field names must be added to the `internal/logging` allowlist with a test;
+  register resolved secrets with the application redactor.
 - Add package comments for new packages and doc comments for exported symbols.
 - Keep `internal/cli` free of probing, SQL, and webhook logic.
 
@@ -123,7 +127,8 @@ observing its result.
 - Use `httptest` instead of real network services.
 - Use temporary directories for SQLite/config tests.
 - Inject clocks and ID generators for deterministic scheduling/incident tests.
-- Run `go test -race ./...` for concurrency changes.
+- Run `go test -race ./...` for concurrency changes, and
+  `go test -race -shuffle=on -count=1 ./...` before opening a pull request.
 - Add regression tests for every bug fix where practical.
 - Do not add trivial tests solely to raise coverage.
 

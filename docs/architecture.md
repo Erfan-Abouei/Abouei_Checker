@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 design baseline; only `version` is implemented |
+| Status | Phase 1 shared foundation implemented; only `version` is operational |
 | Audience | Contributors and maintainers |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [CLI contract](cli-contract.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md) |
 
@@ -24,19 +24,22 @@ This is pragmatic layering, not a full Clean Architecture or DDD framework. Ther
 is no plugin system, dependency-injection container, generic repository
 abstraction, or interface for every struct.
 
-## 2. Current Phase 0 Implementation
+## 2. Current Phase 1 Implementation
 
 The repository currently contains:
 
 ```text
 cmd/abouei-checker/       process entry point and signal context
+internal/app/             composition root, global options, shared errors
 internal/buildinfo/       linker-injected build metadata
-internal/cli/             Cobra command tree, output flag, exit-code mapping
+internal/cli/             Cobra command tree, global flags, rendering, exit mapping
+internal/logging/         slog handlers, level/format parsing, redaction boundary
 ```
 
-Only `version` performs work. The package layout below describes intended
-ownership for later phases; empty placeholder packages are deliberately not
-created.
+Only `version` performs work. The CLI accepts `--config` and `--log-level` for
+every command, but `--config` is not read until Phase 2. The package layout below
+describes intended ownership for later phases; empty placeholder packages are
+deliberately not created.
 
 ## 3. Planned Package Ownership
 
@@ -44,7 +47,8 @@ created.
 | --- | --- | --- |
 | `cmd/abouei-checker` | Process entry, signal context, wiring of stdin/stdout/stderr, exit | Business logic, Cobra command definitions |
 | `internal/cli` | Command tree, flags, help, human/JSON rendering, exit-code mapping | Scheduling, HTTP, SQLite, webhook delivery |
-| `internal/app` | Use-case orchestration for validate/check/monitor/status/history; lifecycle and dependency wiring | Cobra types, SQL, transport details |
+| `internal/app` | Composition root, global options, logger wiring, build metadata, shared error categories | Cobra types, SQL, transport details |
+| `internal/logging` | `slog` handler configuration, level/format parsing, safe-field and redaction rules | Command behavior, configuration loading, network or persistence |
 | `internal/config` | Discovery, bounded reading, expansion, strict decoding, defaults, validation, immutable runtime config | Database access, network calls |
 | `internal/probe` | Safe HTTP client, request construction, status/body criteria, result types | Incident policy, persistence, Cobra |
 | `internal/monitor` | Per-backend scheduling, global concurrency, no-overlap enforcement, probe result dispatch | Webhook payloads, SQL |
@@ -62,6 +66,7 @@ introduced for hypothetical future databases or transports.
 ```mermaid
 flowchart TD
     CLI[internal/cli] --> APP[internal/app]
+    APP --> LOG[internal/logging]
     APP --> CFG[internal/config]
     APP --> MON[internal/monitor]
     APP --> INC[internal/incident]
@@ -92,6 +97,11 @@ Rules:
    and kept narrow. Concrete types are used elsewhere.
 7. No package imports `internal/cli` except `cmd/abouei-checker`.
 8. There are no circular dependencies.
+9. `internal/logging` does not import application or CLI packages. Application
+   and future domain packages may use it for logger construction and redaction.
+10. Shared application errors live in `internal/app`; `internal/cli` maps their
+    categories to exit codes. Domain packages return ordinary errors that the
+    application boundary classifies.
 
 ## 4. Domain and Application Boundaries
 
@@ -255,11 +265,16 @@ The worker is not implemented in Phase 0.
 ## 10. Error Handling
 
 - Errors are wrapped with `%w` and contextual messages that preserve the cause.
+- Expected application failures use `internal/app.Error`, which carries a
+  category, a stable code, a safe user-facing message, and an optional internal
+  cause. `Error()` and `SafeMessage()` never render the cause.
 - User-facing errors name the field or operation, not secret values.
 - Probe failures are data, not process errors. A timeout is an observation and
   may lead to an incident; an unreadable database is an operational error.
-- The CLI maps outcomes to the stable exit-code categories in
-  [cli-contract.md](cli-contract.md). Cobra does not call `os.Exit` directly.
+- The CLI maps categories to the stable exit-code categories in
+  [cli-contract.md](cli-contract.md). Cobra parse/validation errors are classified
+  as usage at the execution boundary; unclassified command errors default to
+  internal. Cobra does not call `os.Exit` directly.
 - Application code returns errors; only `cmd/abouei-checker` converts the final
   exit code to the process status.
 - Database corruption or a newer schema fails closed. The application never
@@ -271,17 +286,30 @@ The worker is not implemented in Phase 0.
 
 Logging uses `log/slog` with `DEBUG`, `INFO`, `WARN`, and `ERROR` levels.
 
-- Destination: stderr. Text is the default; `logging.format: json` selects
-  structured JSON logs.
-- Default level: `info`; configuration and `--log-level` control selection.
-- Logs include UTC time, level, message, and relevant IDs/durations/outcomes.
+- Destination: stderr. Application logs never write to stdout.
+- Format: text by default; JSON is supported through the logging API and will be
+  selected by `logging.format` when Phase 2 adds configuration loading. Phase 1
+  does not expose a separate format flag.
+- Default level: `info`. `--log-level` overrides it case-insensitively for one
+  invocation; future configuration supplies `logging.level`.
+- Timestamps are UTC and use a fixed RFC3339 format with milliseconds. Stable
+  field names include `component`, `command`, `backend_id`, `operation`,
+  `duration_ms`, `http_status`, `failure_reason`, `outcome`, `attempt`,
+  `error_category`, and `error_code`.
+- `internal/logging` enforces an allowlist of safe field names. Unknown fields,
+  groups, maps, structs, and non-error `any` values have their values redacted.
+  Resolved secrets registered with the redactor are replaced literally, and URL
+  userinfo/query strings, cookies, bearer/basic credentials, and secret
+  assignments are normalized as a defense-in-depth backstop.
 - Logs never include header values, secret references, response bodies, webhook
   tokens, URL userinfo, or query strings that may carry credentials.
 - stdout is reserved for command results and JSON output. Logs must not corrupt
   machine-readable stdout.
 
-Logging is configured in `internal/app` (Phase 1). A separate logging package is
-not justified unless redaction or sinks become complex enough to warrant one.
+The logger is created in `internal/app` with an injected writer. Its construction
+and redaction behavior are tested independently in `internal/logging` and
+`internal/app`. See [ADR-0005](decisions/0005-logging-error-boundaries.md) and the
+safe-logging boundaries in [security.md](security.md#10-logging-and-error-handling).
 
 ## 12. Concurrency and Resource Ownership
 
