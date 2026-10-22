@@ -22,10 +22,14 @@ On startup every backend is probed immediately, then each backend is probed on
 its configured interval. Probes for the same backend never overlap;
 independent backends run concurrently under runtime.max_concurrent_probes.
 
-Failure streaks are kept in memory only; no SQLite state, incidents, or
-notifications are created. Unhealthy backends do not terminate monitoring.
+Failure streaks, incidents, and notification intent persist in SQLite across
+restarts. Reaching a backend's failure threshold opens an incident and
+enqueues a Down event; meeting its recovery threshold closes it and enqueues
+Recovery. A background worker delivers due webhook events with bounded
+retries. Unhealthy backends do not terminate monitoring.
 On SIGINT/SIGTERM the command stops scheduling, waits up to
-runtime.shutdown_timeout for in-flight probes, and exits 0.`,
+runtime.shutdown_timeout for in-flight probes, and exits 0. Pending outbox
+rows remain durable for the next start.`,
 		Example: `  abouei-checker monitor
   abouei-checker monitor --config ./abouei.yaml --output json`,
 		Args: noArgs,
@@ -101,6 +105,13 @@ runtime.shutdown_timeout for in-flight probes, and exits 0.`,
 	}
 }
 
+func incidentStatusOrNone(status string) string {
+	if status == "" {
+		return "none"
+	}
+	return status
+}
+
 func joinIDs(ids []string) string {
 	if len(ids) == 0 {
 		return ""
@@ -113,13 +124,17 @@ func joinIDs(ids []string) string {
 }
 
 func formatMonitorLine(event app.MonitorEvent) string {
+	incident := ""
+	if event.IncidentStatus != "" && event.IncidentStatus != "none" {
+		incident = fmt.Sprintf(" [incident %s]", event.IncidentStatus)
+	}
 	if event.Healthy {
 		if event.HTTPStatus != 0 {
-			return fmt.Sprintf("%s: healthy (%d in %dms) [streak %d/%d]",
+			return fmt.Sprintf("%s: healthy (%d in %dms) [streak %d/%d]%s",
 				event.BackendID, event.HTTPStatus, event.DurationMs,
-				event.ConsecutiveFailures, event.FailureThreshold)
+				event.ConsecutiveFailures, event.FailureThreshold, incident)
 		}
-		return fmt.Sprintf("%s: healthy (in %dms)", event.BackendID, event.DurationMs)
+		return fmt.Sprintf("%s: healthy (in %dms)%s", event.BackendID, event.DurationMs, incident)
 	}
 	detail := event.Error
 	if detail == "" {
@@ -127,13 +142,13 @@ func formatMonitorLine(event app.MonitorEvent) string {
 	}
 	status := event.Outcome
 	if event.HTTPStatus != 0 {
-		return fmt.Sprintf("%s: %s (%d in %dms): %s [streak %d/%d]",
+		return fmt.Sprintf("%s: %s (%d in %dms): %s [streak %d/%d]%s",
 			event.BackendID, status, event.HTTPStatus, event.DurationMs,
-			detail, event.ConsecutiveFailures, event.FailureThreshold)
+			detail, event.ConsecutiveFailures, event.FailureThreshold, incident)
 	}
-	return fmt.Sprintf("%s: %s: %s [streak %d/%d]",
+	return fmt.Sprintf("%s: %s: %s [streak %d/%d]%s",
 		event.BackendID, status, detail,
-		event.ConsecutiveFailures, event.FailureThreshold)
+		event.ConsecutiveFailures, event.FailureThreshold, incident)
 }
 
 func monitorProbeEnvelope(event app.MonitorEvent) envelope {
@@ -153,6 +168,7 @@ func monitorProbeEnvelope(event app.MonitorEvent) envelope {
 		"consecutive_failures": event.ConsecutiveFailures,
 		"failure_threshold":    event.FailureThreshold,
 		"threshold_reached":    event.ThresholdReached,
+		"incident_status":      incidentStatusOrNone(event.IncidentStatus),
 		"cycle":                event.Cycle,
 	}
 	if event.FailureReason != "" {

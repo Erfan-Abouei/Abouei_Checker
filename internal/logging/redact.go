@@ -42,6 +42,7 @@ var safeAttributeKeys = map[string]struct{}{
 	"failure_threshold":     {},
 	"http_status":           {},
 	"incident_id":           {},
+	"incident_status":       {},
 	"operation":             {},
 	"outcome":               {},
 	"threshold_reached":     {},
