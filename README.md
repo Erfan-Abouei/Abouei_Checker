@@ -4,7 +4,7 @@ AboueiChecker (`abouei-checker`) is an open-source Go CLI for monitoring backend
 HTTP health endpoints, detecting outages and recoveries, keeping local SQLite
 history, and sending configurable generic webhook notifications.
 
-> **Project status: Phase 3 health probe and monitoring complete (in-memory).**
+> **Project status: Phase 4 durable incidents, SQLite persistence, and webhook notifications complete.**
 >
 > **Release status:** `main` intentionally contains no production release yet.
 > Active implementation and verification continue on the `develop` branch.
@@ -13,9 +13,10 @@ history, and sending configurable generic webhook notifications.
 > root/command help, global `--config`/`--log-level` flags, strict YAML
 > loading, defaults/inheritance, environment-reference resolution, validation,
 > structured logging, redaction, centralized exit-code mapping, the safe HTTP
-> probe engine, and the per-backend scheduler are implemented. `check` and
-> `monitor` keep threshold streaks in memory only: SQLite, incidents, and
-> webhooks are specified but **not yet available**. Do not use this repository
+> probe engine, the per-backend scheduler, threshold-driven incidents, SQLite
+> persistence with migrations, and generic webhook notifications with durable
+> retries are implemented. `status`, `history`, retention, and backup guidance
+> are specified but **not yet available**. Do not use this repository
 > for production monitoring yet.
 
 ## Why AboueiChecker
@@ -54,11 +55,11 @@ distributed observability system.
 | Environment-reference expansion and redaction registration | Implemented |
 | Structured logging and redaction foundation | Implemented |
 | Shared error categories and exit-code mapping | Implemented |
-| `check`, `monitor` | Implemented (in-memory threshold state; no SQLite, incidents, or webhooks yet) |
+| `check`, `monitor` (durable incidents + webhook delivery) | Implemented |
 | `status`, `history` | Planned — not available |
 | HTTP probing and scheduling | Implemented |
-| Incidents, webhooks, retries | Planned — not available |
-| SQLite persistence and migrations | Planned — not available |
+| Incidents, webhooks, retries | Implemented (generic webhook, at-least-once, bounded retries) |
+| SQLite persistence and migrations (migration 1) | Implemented |
 | Release binaries and container releases | Not published |
 
 `--config` selects an explicit file; when it is omitted, `ABOUEI_CONFIG`,
@@ -164,14 +165,14 @@ For a persistent installation, write the generated script to your shell's
 completion directory. Run `abouei-checker completion <shell> --help` for the
 upstream Cobra instructions.
 
-Planned command surface (not yet usable):
+Command surface:
 
-| Command | Intended purpose |
+| Command | Status | Intended purpose |
 | --- | --- |
-| `check [BACKEND_ID...]` | Probe selected backends once, persist state, attempt due notifications, and exit |
-| `monitor` | Run continuous scheduling, notifications, and graceful shutdown |
-| `status` | Read current backend and incident state from SQLite |
-| `history` | Read observations and incident transitions from SQLite |
+| `check [BACKEND_ID...]` | Implemented | Probe selected backends once, persist state, attempt due notifications, and exit |
+| `monitor` | Implemented | Run continuous scheduling, notifications, and graceful shutdown |
+| `status` | Planned (Phase 5) | Read current backend and incident state from SQLite |
+| `history` | Planned (Phase 5) | Read observations and incident transitions from SQLite |
 
 The exact flags, output, and exit semantics are in the
 [CLI contract](docs/cli-contract.md).
@@ -310,12 +311,12 @@ verification requirements.
 
 ## Quality and Security
 
-Phase 3 keeps formatting, vet, lint, unit tests, race detection, a 75% coverage
+Phase 4 keeps formatting, vet, lint, unit tests, race detection, an 80% overall and per-core-package coverage
 gate, cross-build verification, CI, CodeQL, Dependabot, and a pinned
 `govulncheck` workflow. The local environment cannot reach `vuln.go.dev` (HTTP
 403); this is reported as blocked rather than a pass. GitHub CI and CodeQL
 results are recorded separately in the
-[Phase 3 completion report](docs/phase-3-completion.md).
+[Phase 4 completion report](docs/phase-4-completion.md).
 
 Security reporting: use GitHub private vulnerability reporting as described in
 [SECURITY.md](SECURITY.md). Do not open a public issue with exploit details or

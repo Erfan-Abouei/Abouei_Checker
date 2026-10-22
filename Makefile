@@ -7,7 +7,7 @@ GO ?= go
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-COVERAGE_MIN ?= 75
+COVERAGE_MIN ?= 80
 
 LDFLAGS := -s -w \
 	-X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
@@ -52,6 +52,7 @@ cover: ## Generate a coverage profile
 
 cover-check: cover ## Enforce the coverage threshold
 	COVERAGE_MIN=$(COVERAGE_MIN) ./scripts/check-coverage.sh coverage.out
+	./scripts/check-package-coverage.sh coverage.out 80 internal/config internal/probe internal/monitor internal/incident internal/notify internal/store
 
 vuln: ## Scan dependencies and the standard library for known vulnerabilities
 	govulncheck ./...

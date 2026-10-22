@@ -54,9 +54,12 @@ With no IDs, all configured backends are checked. An unknown backend ID is a
 usage error and no request is performed. Each backend is probed concurrently
 under runtime.max_concurrent_probes with its configured timeout.
 
-Failure streaks are kept in memory for this invocation only; no SQLite state,
-incidents, or notifications are created. Exit 1 reports at least one
-non-healthy probe, even below the configured failure threshold.`,
+Results persist atomically with incident transitions and notification intent
+in SQLite. Reaching a backend's failure threshold opens an incident and
+enqueues a Down event; meeting its recovery threshold closes it and enqueues
+Recovery. Due notifications are attempted once; a failed attempt exits 4 with
+the event left queued. Exit 1 reports at least one non-healthy probe, even
+below the configured failure threshold.`,
 		Example: `  abouei-checker check
   abouei-checker check api web
   abouei-checker check --config ./abouei.yaml --output json`,
@@ -86,12 +89,19 @@ non-healthy probe, even below the configured failure threshold.`,
 				}
 			}
 
-			if summary.Unhealthy > 0 {
+			// Precedence: notification failure (4) outranks unhealthy (1).
+			if summary.NotificationsFailed > 0 {
 				return &outputWrittenError{err: app.WrapError(
-					app.CategoryUnhealthy,
-					app.CodeInternal,
-					checkUnhealthyMessage(summary),
-					fmt.Errorf("%d of %d backends unhealthy", summary.Unhealthy, summary.Total),
+					app.CategoryNotification,
+					app.CodeNotificationFailed,
+					fmt.Sprintf(
+						"%d of %d notifications failed; events remain queued",
+						summary.NotificationsFailed, summary.NotificationsAttempted,
+					),
+					fmt.Errorf(
+						"%d of %d notifications failed",
+						summary.NotificationsFailed, summary.NotificationsAttempted,
+					),
 				)}
 			}
 			if summary.Canceled > 0 {
@@ -100,6 +110,14 @@ non-healthy probe, even below the configured failure threshold.`,
 					app.CodeInternal,
 					"check canceled",
 					context.Canceled,
+				)}
+			}
+			if summary.Unhealthy > 0 {
+				return &outputWrittenError{err: app.WrapError(
+					app.CategoryUnhealthy,
+					app.CodeInternal,
+					checkUnhealthyMessage(summary),
+					fmt.Errorf("%d of %d backends unhealthy", summary.Unhealthy, summary.Total),
 				)}
 			}
 			return nil
@@ -122,8 +140,10 @@ func writeCheckText(w io.Writer, results []app.CheckResult, summary app.CheckSum
 		}
 	}
 	summaryLine := fmt.Sprintf(
-		"Summary: %d healthy, %d unhealthy, %d canceled of %d backends",
+		"Summary: %d healthy, %d unhealthy, %d canceled of %d backends; %d incidents opened, %d closed; %d notifications attempted, %d failed",
 		summary.Healthy, summary.Unhealthy, summary.Canceled, summary.Total,
+		summary.IncidentsOpened, summary.IncidentsClosed,
+		summary.NotificationsAttempted, summary.NotificationsFailed,
 	)
 	if _, err := fmt.Fprintln(w, summaryLine); err != nil {
 		return err
@@ -133,11 +153,15 @@ func writeCheckText(w io.Writer, results []app.CheckResult, summary app.CheckSum
 
 func formatCheckLine(result app.CheckResult) string {
 	status := result.Outcome
+	incident := ""
+	if result.IncidentStatus != "" && result.IncidentStatus != "none" {
+		incident = fmt.Sprintf(" [incident %s]", result.IncidentStatus)
+	}
 	if result.Outcome == "healthy" {
 		if result.HTTPStatus != 0 {
-			return fmt.Sprintf("%s: healthy (%d in %s)", result.BackendID, result.HTTPStatus, result.Duration.Truncate(time.Millisecond))
+			return fmt.Sprintf("%s: healthy (%d in %s)%s", result.BackendID, result.HTTPStatus, result.Duration.Truncate(time.Millisecond), incident)
 		}
-		return fmt.Sprintf("%s: healthy (in %s)", result.BackendID, result.Duration.Truncate(time.Millisecond))
+		return fmt.Sprintf("%s: healthy (in %s)%s", result.BackendID, result.Duration.Truncate(time.Millisecond), incident)
 	}
 	var detail strings.Builder
 	if result.HTTPStatus != 0 {
@@ -152,6 +176,7 @@ func formatCheckLine(result app.CheckResult) string {
 		detail.WriteString(result.Error)
 	}
 	fmt.Fprintf(&detail, " [streak %d/%d]", result.ConsecutiveFailures, result.FailureThreshold)
+	detail.WriteString(incident)
 	return fmt.Sprintf("%s: %s (%s)", result.BackendID, status, detail.String())
 }
 
@@ -176,7 +201,7 @@ func buildCheckPayload(results []app.CheckResult, summary app.CheckSummary) enve
 			ConsecutiveFailures: result.ConsecutiveFailures,
 			FailureThreshold:    result.FailureThreshold,
 			ThresholdReached:    result.ThresholdReached,
-			IncidentStatus:      "none",
+			IncidentStatus:      result.IncidentStatus,
 		})
 	}
 	if converted == nil {
@@ -193,10 +218,10 @@ func buildCheckPayload(results []app.CheckResult, summary app.CheckSummary) enve
 				Healthy:                summary.Healthy,
 				Unhealthy:              summary.Unhealthy,
 				Canceled:               summary.Canceled,
-				IncidentsOpened:        0,
-				IncidentsClosed:        0,
-				NotificationsAttempted: 0,
-				NotificationsFailed:    0,
+				IncidentsOpened:        summary.IncidentsOpened,
+				IncidentsClosed:        summary.IncidentsClosed,
+				NotificationsAttempted: summary.NotificationsAttempted,
+				NotificationsFailed:    summary.NotificationsFailed,
 			},
 			Results: converted,
 		},

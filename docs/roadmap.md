@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0–2 complete; Phase 3 implemented and locally verified; Phases 4–7 pending |
+| Status | Phases 0–3 complete; Phase 4 implemented and locally verified; Phases 5–7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -203,6 +203,12 @@ scheduling, concurrency limits, cancellation, and normalized probe results.
 - Coverage floor reaches at least 75%.
 
 ## 6. Phase 4 — Incident Lifecycle, Durable State & Notifications
+
+**Status:** Implemented on `feature/phase-4-incident-notification-engine` with
+local verification; remote CI/CodeQL evidence recorded in the
+[Phase 4 completion report](phase-4-completion.md). `check` and `monitor` use
+the durable incident lifecycle with SQLite persistence and webhook delivery.
+`status`, `history`, retention, and backup guidance remain Phase 5 work.
 
 ### Objective
 
