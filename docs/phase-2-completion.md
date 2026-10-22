@@ -4,9 +4,10 @@
 | --- | --- |
 | Date | 2026-10-22 |
 | Phase | 2 — Configuration & Backend Registry |
-| Status | Implemented and locally verified; GitHub CI/CodeQL pending |
+| Status | Implemented and verified locally and on GitHub CI/CodeQL (PR #6); merge pending |
 | Repository | `github.com/Erfan-Abouei/Abouei_Checker` |
 | Branch | `feature/phase-2-configuration` |
+| Pull request | [#6](https://github.com/Erfan-Abouei/Abouei_Checker/pull/6) |
 | Baseline | `develop` at `8ea51b5` |
 | Production readiness | Not production-ready; monitoring commands remain unavailable |
 
@@ -306,9 +307,17 @@ Residual risks:
 
 ## 9. GitHub CI/CodeQL Status
 
-Pending: the feature branch has not yet been pushed in this report. After the
-authorized push and pull request, this section will record the actual workflow
-run identifiers or links. No remote pass is claimed before observation.
+Remote validation was performed on pull request #6.
+
+| Workflow | Run | Branch/event | Result |
+| --- | --- | --- | --- |
+| CI | [39784874698](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39784874698) | feature branch, pull request #6 | success |
+| CodeQL | [39784874737](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39784874737) | feature branch, pull request #6 | success |
+
+CI jobs observed as successful: `Quality and tests`, `Lint`,
+`Cross-platform build`, and `Container smoke test`. The `Quality and tests` job
+includes the pinned `govulncheck` step, so the local 403 limitation is covered
+by an actual remote run. CodeQL `Analyze Go (go)` completed successfully.
 
 ## 10. Scope Compliance
 
@@ -334,6 +343,8 @@ explicitly documented as having no runtime effect yet.
 
 - Baseline `develop`: `8ea51b5` (Phase 1 merge).
 - Feature branch: `feature/phase-2-configuration`.
+- Pull request: [#6](https://github.com/Erfan-Abouei/Abouei_Checker/pull/6), targeting
+  `develop`.
 - Implementation commits:
   - `0c69ef2` — `feat(config): add strict YAML loading, validation, and init template`
   - `a765062` — `feat(app): load configuration and apply configuration logging`
