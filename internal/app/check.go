@@ -6,13 +6,17 @@ import (
 	"time"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/config"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/incident"
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/monitor"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/notify"
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/probe"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/store"
 )
 
 // CheckResult is the application-facing outcome of one backend probe with its
-// in-memory threshold snapshot. It uses only plain types so the CLI can render
-// results without importing the probe or monitor packages.
+// persisted threshold and incident snapshot. It uses only plain types so the
+// CLI can render results without importing the probe, monitor, or store
+// packages.
 type CheckResult struct {
 	// BackendID is the stable configured backend identity.
 	BackendID string
@@ -33,15 +37,18 @@ type CheckResult struct {
 	// BodyMatched reports the body-condition outcome. Nil when no matcher is
 	// configured or evaluation did not reach the body stage.
 	BodyMatched *bool
-	// ConsecutiveFailures is the in-memory streak after recording the result.
+	// ConsecutiveFailures is the persisted streak after recording the result.
 	ConsecutiveFailures int
 	// FailureThreshold is the configured consecutive-failure threshold.
 	FailureThreshold int
 	// ThresholdReached is true once the streak reaches the threshold.
 	ThresholdReached bool
+	// IncidentStatus is one of none, open, still_open, or recovered.
+	IncidentStatus string
 }
 
-// CheckSummary aggregates one-shot outcomes.
+// CheckSummary aggregates one-shot outcomes with durable incident and
+// delivery counts.
 type CheckSummary struct {
 	// Total is the number of selected backends.
 	Total int
@@ -52,6 +59,14 @@ type CheckSummary struct {
 	Unhealthy int
 	// Canceled counts OutcomeCanceled results.
 	Canceled int
+	// IncidentsOpened counts incidents opened by this invocation.
+	IncidentsOpened int
+	// IncidentsClosed counts incidents closed by this invocation.
+	IncidentsClosed int
+	// NotificationsAttempted counts webhook attempts made by this invocation.
+	NotificationsAttempted int
+	// NotificationsFailed counts attempted deliveries that did not succeed.
+	NotificationsFailed int
 }
 
 // SelectBackends resolves backendIDs to configured backends in configuration
@@ -85,8 +100,9 @@ func SelectBackends(cfg *config.Config, backendIDs []string) ([]config.Backend, 
 }
 
 // Check executes one probe per selected backend concurrently, bounded by
-// runtime.max_concurrent_probes, and returns deterministic configuration-order
-// results with in-memory streak state. Configuration must be loaded with
+// runtime.max_concurrent_probes, and persists each result with its incident
+// transition and notification intent in a per-backend transaction. It then
+// attempts every due notification once. Configuration must be loaded with
 // LoadConfig before calling Check.
 func (a *App) Check(ctx context.Context, backendIDs []string) ([]CheckResult, CheckSummary, error) {
 	if a == nil || a.config == nil {
@@ -101,36 +117,30 @@ func (a *App) Check(ctx context.Context, backendIDs []string) ([]CheckResult, Ch
 		return nil, CheckSummary{}, err
 	}
 
-	thresholds := make(map[string]int, len(selected))
-	names := make(map[string]string, len(selected))
-	for _, backend := range selected {
-		thresholds[backend.ID] = backend.FailureThreshold
-		names[backend.ID] = backend.Name
+	db, err := a.OpenStore()
+	if err != nil {
+		return nil, CheckSummary{}, err
 	}
-	tracker := monitor.NewTracker(thresholds, names)
+	defer func() { _ = db.Close() }()
+
+	if err := a.reconcileStore(ctx, db); err != nil {
+		return nil, CheckSummary{}, err
+	}
 
 	prober := probe.New()
 	defer prober.CloseIdleConnections()
 
-	checked := monitor.RunOnce(ctx, selected, prober, tracker, a.config.Runtime.MaxConcurrentProbes)
+	checked := monitor.RunOnce(ctx, selected, prober, nil, a.config.Runtime.MaxConcurrentProbes)
 
+	now := time.Now().UTC()
 	results := make([]CheckResult, len(checked))
 	summary := CheckSummary{Total: len(checked)}
 	for i, item := range checked {
-		results[i] = CheckResult{
-			BackendID:           item.Result.BackendID,
-			Name:                item.Result.Name,
-			Outcome:             string(item.Result.Outcome),
-			HTTPStatus:          item.Result.HTTPStatus,
-			Duration:            item.Result.Duration,
-			ObservedAt:          item.Result.ObservedAt,
-			FailureReason:       string(item.Result.FailureReason),
-			Error:               item.Result.Error,
-			BodyMatched:         item.Result.BodyMatched,
-			ConsecutiveFailures: item.State.ConsecutiveFailures,
-			FailureThreshold:    item.State.FailureThreshold,
-			ThresholdReached:    item.State.ThresholdReached,
+		outcome, err := db.ProcessResult(ctx, item.Backend, item.Result, now)
+		if err != nil {
+			return nil, CheckSummary{}, classifyStoreError(err)
 		}
+		results[i] = persistedCheckResult(item, outcome)
 		switch item.Result.Outcome {
 		case probe.OutcomeHealthy:
 			summary.Healthy++
@@ -139,9 +149,22 @@ func (a *App) Check(ctx context.Context, backendIDs []string) ([]CheckResult, Ch
 		default:
 			summary.Unhealthy++
 		}
+		switch outcome.Transition {
+		case incident.TransitionOpened:
+			summary.IncidentsOpened++
+		case incident.TransitionRecovered:
+			summary.IncidentsClosed++
+		}
 
-		a.logCheckResult(ctx, item.Result, item.State)
+		a.logCheckResult(ctx, item.Result, outcome)
 	}
+
+	attempted, failed, err := a.deliverDue(ctx, db)
+	if err != nil {
+		return results, summary, err
+	}
+	summary.NotificationsAttempted = attempted
+	summary.NotificationsFailed = failed
 
 	if ctx.Err() != nil && summary.Canceled > 0 && summary.Healthy+summary.Unhealthy == 0 {
 		return results, summary, WrapError(
@@ -155,7 +178,59 @@ func (a *App) Check(ctx context.Context, backendIDs []string) ([]CheckResult, Ch
 	return results, summary, nil
 }
 
-func (a *App) logCheckResult(ctx context.Context, result probe.Result, state monitor.Snapshot) {
+// deliverDue attempts every currently-due notification once. Delivery
+// failures stay durable and are reported; incident state is never rolled
+// back because of them.
+func (a *App) deliverDue(ctx context.Context, db *store.Store) (attempted, failed int, err error) {
+	if a == nil || a.config == nil || db == nil {
+		return 0, 0, NewError(CategoryInternal, CodeInternal, "configuration is not loaded")
+	}
+	worker := a.newWorker(db)
+	return worker.ProcessDue(ctx)
+}
+
+// newWorker builds the notification worker for the loaded configuration.
+// Header values are copied so later caller mutation cannot race delivery.
+func (a *App) newWorker(db *store.Store) *notify.Worker {
+	webhook := a.config.Notifications.Webhook
+	headers := append([]config.Header(nil), webhook.Headers...)
+	return notify.NewWorker(notify.WorkerOptions{
+		Outbox: db,
+		Webhook: notify.WebhookConfig{
+			URL:     webhook.URL,
+			Headers: headers,
+			Timeout: webhook.Timeout,
+		},
+		Retry: notify.RetryConfigFrom(a.config.Notifications.Retry),
+	})
+}
+
+func persistedCheckResult(item monitor.CheckedBackend, outcome store.ProcessOutcome) CheckResult {
+	status := store.IncidentNone
+	if !outcome.Skipped {
+		status = outcome.IncidentStatus
+	}
+	failures := outcome.Failures
+	threshold := outcome.FailureThreshold
+	thresholdReached := threshold > 0 && failures >= threshold
+	return CheckResult{
+		BackendID:           item.Result.BackendID,
+		Name:                item.Result.Name,
+		Outcome:             string(item.Result.Outcome),
+		HTTPStatus:          item.Result.HTTPStatus,
+		Duration:            item.Result.Duration,
+		ObservedAt:          item.Result.ObservedAt,
+		FailureReason:       string(item.Result.FailureReason),
+		Error:               item.Result.Error,
+		BodyMatched:         item.Result.BodyMatched,
+		ConsecutiveFailures: failures,
+		FailureThreshold:    threshold,
+		ThresholdReached:    thresholdReached,
+		IncidentStatus:      status,
+	}
+}
+
+func (a *App) logCheckResult(ctx context.Context, result probe.Result, outcome store.ProcessOutcome) {
 	if a == nil || a.logger == nil {
 		return
 	}
@@ -173,8 +248,13 @@ func (a *App) logCheckResult(ctx context.Context, result probe.Result, state mon
 	if result.FailureReason != "" {
 		attrs = append(attrs, "failure_reason", string(result.FailureReason))
 	}
-	attrs = append(attrs, "consecutive_failures", state.ConsecutiveFailures)
-	attrs = append(attrs, "threshold_reached", state.ThresholdReached)
+	if !outcome.Skipped {
+		attrs = append(attrs, "consecutive_failures", outcome.Failures)
+		attrs = append(attrs, "threshold_reached", outcome.FailureThreshold > 0 && outcome.Failures >= outcome.FailureThreshold)
+	}
+	if outcome.IncidentID != "" {
+		attrs = append(attrs, "incident_id", outcome.IncidentID)
+	}
 
 	switch result.Outcome {
 	case probe.OutcomeHealthy:

@@ -17,8 +17,8 @@ not be advertised as usable.
 | `version` | Implemented | Print build metadata |
 | `init` | Implemented | Write a commented configuration template |
 | `validate` | Implemented | Load, resolve, and validate configuration without network or database access |
-| `check` | Implemented (Phase 3, in-memory) | Probe each selected backend once and exit; no SQLite, no incidents, no notifications |
-| `monitor` | Implemented (Phase 3, in-memory) | Continuously schedule probes with per-backend intervals until graceful shutdown; no SQLite, no incidents, no notifications |
+| `check` | Implemented (Phase 4, durable) | Probe each selected backend once, persist state, attempt due notifications, and exit |
+| `monitor` | Implemented (Phase 4, durable) | Continuously schedule probes and notifications until graceful shutdown |
 | `status` | Planned | Read current backend and incident state from SQLite |
 | `history` | Planned | Read observations and incident transitions from SQLite |
 | root/help | Implemented | Show command help |
@@ -116,7 +116,7 @@ abouei-checker validate [--output text|json]
   stable `code` and safe `details`, and stderr contains exactly one `Error:`
   line.
 
-### 3.4 `check` (implemented in Phase 3 without persistence)
+### 3.4 `check` (implemented in Phase 4 with persistence)
 
 ```text
 abouei-checker check [BACKEND_ID...] [--config PATH] [--output text|json]
@@ -125,40 +125,47 @@ abouei-checker check [BACKEND_ID...] [--config PATH] [--output text|json]
 - Performs one probe per selected backend. With no IDs, checks all configured
   backends. An unknown ID is a usage error (exit `2`); no request is performed
   in that case.
-- Probes concurrently under `runtime.max_concurrent_probes` in deterministic
-  configuration order. One backend's timeout or failure never blocks the others.
-- Tracks consecutive-failure streaks in memory only. It opens no SQLite
-  database, persists no observations or threshold state, creates no incidents,
-  and delivers no notifications. Reported `incidents_opened`,
-  `incidents_closed`, `notifications_attempted`, and `notifications_failed`
-  are therefore always `0`, and per-result `incident_status` is always `"none"`.
+- Opens and migrates SQLite, reconciles durable state, probes concurrently
+  under `runtime.max_concurrent_probes` in deterministic configuration order,
+  and persists each result in a transaction (observation, streaks, incident
+  transition, outbox insert). One backend's timeout or failure never blocks
+  the others.
+- Applies the incident and reminder policy. It is not a long-running
+  scheduler: future reminders are scheduled for the next invocation or a
+  running monitor, but an already-due reminder is enqueued in the same run.
+- Attempts every due notification event once after the probes. Failed attempts
+  remain durable for later retry; the command does not wait through the full
+  retry backoff schedule.
 - Exit `1` if any selected backend's probe fails (unhealthy or error outcome)
-  in this invocation, even if the configured failure threshold has not been
-  reached. Exit `4` does not apply in this phase because no notifications are
-  attempted.
-- Output includes per-backend health results and a summary. Streak fields
-  (`consecutive_failures`, `failure_threshold`, `threshold_reached`) reflect
-  this invocation's in-memory state only and do not survive process restart.
+  in this invocation, even if the configured failure threshold has not yet
+  opened an incident.
+- Exit `4` if a required notification attempt fails, taking precedence over `1`.
+- Output includes per-backend health results, persisted streaks, incident status
+  (`none`, `open`, `still_open`, `recovered`), and a summary with real
+  `incidents_opened`, `incidents_closed`, `notifications_attempted`, and
+  `notifications_failed` counts.
 
 One-shot `check` is suitable for cron and CI, but it does not provide continuous
 scheduling or reminders while it is not running.
 
-### 3.5 `monitor` (implemented in Phase 3 without persistence)
+### 3.5 `monitor` (implemented in Phase 4 with persistence)
 
 ```text
 abouei-checker monitor [--config PATH] [--output text|json]
 ```
 
 - Runs continuously with one schedule per configured backend.
-- On startup: loads config, immediately probes all configured backends, then
-  ticks each backend on its own interval. No SQLite is opened, no state is
-  restored, and no notification worker starts.
+- On startup: opens/migrates SQLite, resets stale delivery claims, restores
+  threshold streaks and open incidents, immediately probes all configured
+  backends, reconciles open incidents, and starts the notification worker.
 - Never runs overlapping probes for the same backend. Independent backends run
   concurrently under the global limit.
-- Delivers no notifications in this phase; reminder policy is not evaluated.
+- Delivers Down, Recovery, and reminder notifications according to policy, with
+  durable retries. The worker preserves per-incident sequence order; a dead
+  event never blocks a later Recovery.
 - On the first SIGINT/SIGTERM: stops scheduling, cancels in-flight contexts,
-  waits up to `runtime.shutdown_timeout` for cleanup, and exits
-  `0`. Threshold streaks are discarded with the process.
+  waits up to `runtime.shutdown_timeout` for cleanup, stops the worker, closes
+  SQLite, and exits `0`. Pending notification events survive for the next start.
 - A second signal after the shutdown timeout forces termination and uses the
   conventional Unix `128+signal` status (`130` for SIGINT, `143` for SIGTERM).
   Windows signal behavior follows the host platform.
@@ -428,12 +435,12 @@ the same top-level fields. `data.kind` identifies the event, for example:
 
 ```json
 {"schema_version":"1","command":"monitor","generated_at":"2026-10-22T12:00:00Z","status":"success","data":{"kind":"started","backend_count":2},"error":null}
-{"schema_version":"1","command":"monitor","generated_at":"2026-10-22T12:00:01Z","status":"unhealthy","data":{"kind":"probe","backend_id":"api","healthy":false,"http_status":503,"duration_ms":42,"failure_reason":"status_mismatch"},"error":null}
+{"schema_version":"1","command":"monitor","generated_at":"2026-10-22T12:00:01Z","status":"unhealthy","data":{"kind":"probe","backend_id":"api","healthy":false,"http_status":503,"duration_ms":42,"failure_reason":"status_mismatch","incident_status":"open"},"error":null}
 ```
 
-The Phase 3 event vocabulary is `started`, `probe`, and `shutdown`. New `kind`
-values may be added without changing the envelope; notification-related kinds
-arrive with Phase 4.
+The event vocabulary is `started`, `probe`, and `shutdown`. Probe events
+carry `incident_status` (`none`, `open`, `still_open`, `recovered`). New `kind`
+values or fields may be added without changing the envelope.
 
 ### 6.4 Output discipline
 
@@ -478,13 +485,16 @@ arrive with Phase 4.
 
 ## 9. Current Implementation Limitations
 
-Phase 3 implements `check`, `monitor`, the `internal/probe` engine, and the
-`internal/monitor` scheduler and streak tracker on top of the Phase 2
-foundation. `check` and `monitor` keep threshold streaks in memory only.
+Phase 4 implements durable `check` and `monitor` on top of the Phase 3
+foundation: SQLite persistence with migration 1 (`backend_state`, `incidents`,
+`observations`, `notification_events`), the `internal/incident` state machine,
+the `internal/store` transaction boundary, and the `internal/notify` outbox
+worker with bounded retries. Threshold streaks, incidents, and notification
+intent persist across restarts.
 
-The operational commands `status` and `history` remain planned. No SQLite
-store, incident state machine, webhook delivery, or retention job exists yet.
-`check`/`monitor` therefore report no incidents and attempt no notifications;
+The operational commands `status` and `history` remain planned (Phase 5).
+Retention and backup guidance are Phase 5 work; Phase 4 never deletes
+terminal or non-terminal rows.
 full incident and notification behavior arrives in Phase 4.
 
 The roadmap mentions a possible `--version` convenience flag. The CLI contract

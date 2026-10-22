@@ -136,7 +136,7 @@ type Backend struct {
 	// 16 MiB).
 	MaxResponseBytes int
 	// FollowRedirects controls whether redirects are followed. It defaults to
-	// false. This field has no runtime effect until Phase 3.
+	// false and is enforced by the Phase 3+ probe engine.
 	FollowRedirects bool
 	// AcceptedStatusCodes is the explicit ascending, unique status-code list.
 	// Nil means the documented default: every code in 200..299.

@@ -4,7 +4,7 @@
 | --- | --- |
 | Project | AboueiChecker (`Abouei_Checker`) |
 | Document status | Approved Phase 0 baseline |
-| Product status | Phase 2: configuration, `init`, and `validate` implemented; monitoring pending |
+| Product status | Phase 4: durable incidents, SQLite state, `check`/`monitor` notifications implemented; `status`/`history` pending |
 | Last updated | 2026-10-22 |
 
 This document records the approved product requirements and the Phase 0 scope. It

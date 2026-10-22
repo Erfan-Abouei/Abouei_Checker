@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 implementation contract; not implemented |
+| Status | Phase 4 implementation contract; threshold state machine, reminders, payload, and retry policy implemented |
 | Related | [Configuration](configuration.md), [Persistence](persistence.md), [CLI contract](cli-contract.md), [Security](security.md) |
 
 This document defines the semantics that Phase 3 and Phase 4 must implement. It

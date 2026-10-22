@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 3 probe/scheduler tests implemented; incident, persistence, and end-to-end suites planned |
+| Status | Phase 4 incident, persistence, and notification tests implemented; history/status and end-to-end suites planned for Phase 5+ |
 | Go toolchain | 1.27.3 |
 | Related | [Architecture](architecture.md), [Release checklist](release-checklist.md), [Security](security.md) |
 
@@ -137,6 +137,12 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
   `COVERAGE_MIN` in the Makefile.
 - Phase 3 floor: **75% overall**, enforced the same way. Phase 3 measured 88.8%
   overall (`probe` 88.2%, `monitor` 80.6%, `cli` 84.6%, `app` 89.8%).
+- Phase 4 floor: **80% overall and 80% in each core package** (`config`,
+  `probe`, `monitor`, `incident`, `notify`, `store`), enforced by
+  `scripts/check-coverage.sh` plus `scripts/check-package-coverage.sh` through
+  `make cover-check` with `COVERAGE_MIN=80`. Phase 4 measured 86.4% overall
+  (`config` 92.7%, `probe` 88.2%, `app` 87.8%, `cli` 84.9%, `incident` 88.2%,
+  `notify` 81.9%, `store` 81.0%, `monitor` 80.6%).
 - Phase 1 measured 89.4% overall; Phase 2 measured 91.5% overall (config
   package 92.8%). Exact command output is in the corresponding completion
   reports.
