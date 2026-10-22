@@ -95,10 +95,9 @@ CLI output render RFC3339 UTC strings. IDs are UUIDv4 strings generated with
 
 The following DDL is the proposed initial schema. It is not executed in Phase 0
 and may receive implementation-driven adjustments before migration 1 is frozen.
+The migration runner sets `PRAGMA user_version = 1` after creating these objects.
 
 ```sql
-PRAGMA user_version = 1;
-
 CREATE TABLE backend_state (
     backend_id              TEXT PRIMARY KEY,
     consecutive_failures    INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),

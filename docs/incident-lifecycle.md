@@ -124,6 +124,9 @@ Threshold evaluation and persistence are atomic for a single probe. See
 | `incident.recovered` | next unused | Recovery threshold reached | `healthy` |
 
 - The sequence is unique per incident. A unique database constraint enforces it.
+- Sequence `1` is reserved for `incident.opened` even when Down notifications are
+  disabled; in that case the first reminder uses sequence `2`. This keeps the
+  event sequence meaningful without inserting a disabled event row.
 - Reminder sequences depend on how many reminders were actually enqueued.
 - The recovery event uses the next sequence, not a fixed number.
 - Event creation is part of the same transaction as the incident transition.

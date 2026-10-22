@@ -227,6 +227,8 @@ sets `interval: 5s` but inherits `timeout: 10s` is invalid; set both explicitly.
   non-empty and unique. `[]` is invalid rather than a synonym for the default.
 - Redirects are not followed by default. A `3xx` response is therefore evaluated
   as the final status unless it is explicitly listed and redirects are enabled.
+- A backend can reset an inherited explicit list to the 2xx default by listing
+  `200..299` explicitly. Omitting the field inherits the defaults.
 - Status `0` is reserved for transport failures and cannot be configured.
 
 #### Body matching
@@ -244,6 +246,8 @@ Semantics:
 - `regex` compiles the value with Go's RE2 engine and searches for a match
   anywhere in the body. Invalid expressions are configuration errors.
 - Body matching is evaluated only after the final status is accepted.
+- A backend can clear a body matcher inherited from `defaults` with an explicit
+  YAML null (`body_match: null`).
 - A missing match is a failed health observation with reason `body_mismatch`.
 - The body is read up to `max_response_bytes` + 1 bytes. If the limit is
   exceeded while body matching is configured, the observation fails with
