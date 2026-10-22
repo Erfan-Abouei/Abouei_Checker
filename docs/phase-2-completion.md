@@ -307,7 +307,7 @@ Residual risks:
 
 ## 9. GitHub CI/CodeQL Status
 
-Remote validation was performed on pull request #6 and on the promoted
+Remote validation was performed on pull requests #6 and #7 and on the promoted
 branches.
 
 | Workflow | Run | Branch/event | Result |
@@ -316,12 +316,20 @@ branches.
 | CodeQL | [39784874737](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39784874737) | feature branch, pull request #6 | success |
 | CI | [39786047251](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786047251) | final report head, pull request #6 | success |
 | CodeQL | [39786047301](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786047301) | final report head, pull request #6 | success |
-| CI | [39786386388](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786386388) | `develop` push after PR merge | success |
-| CodeQL | [39786386387](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786386387) | `develop` push after PR merge | success |
+| CI | [39786386388](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786386388) | `develop` push after PR #6 merge | success |
+| CodeQL | [39786386387](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786386387) | `develop` push after PR #6 merge | success |
 | CI | [39786991513](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786991513) | `main` promotion push | success |
 | CodeQL | [39786991567](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786991567) | `main` promotion push | success |
 | CI | [39786998156](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786998156) | `develop` synchronization push | success |
 | CodeQL | [39786998221](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39786998221) | `develop` synchronization push | success |
+| CI | [39790574824](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39790574824) | final-state correction, pull request #7 | success |
+| CodeQL | [39790575221](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39790575221) | final-state correction, pull request #7 | success |
+| CI | [39791089925](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39791089925) | `develop` push after PR #7 merge | success |
+| CodeQL | [39791089907](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39791089907) | `develop` push after PR #7 merge | success |
+| CI | [39791359665](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39791359665) | `main` promotion push | success |
+| CodeQL | [39791359618](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39791359618) | `main` promotion push | success |
+| CI | [39791370785](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39791370785) | `develop` synchronization push | success |
+| CodeQL | [39791370832](https://github.com/Erfan-Abouei/Abouei_Checker/actions/runs/39791370832) | `develop` synchronization push | success |
 
 CI jobs observed as successful: `Quality and tests`, `Lint`,
 `Cross-platform build`, and `Container smoke test`. The `Quality and tests` job
@@ -360,9 +368,13 @@ explicitly documented as having no runtime effect yet.
   - `a9ee037` — `feat(cli): add init and validate commands with JSON error envelopes`
   - `c135a24` — documentation and Phase 2 report
   - `2a4f648` — GitHub CI/CodeQL evidence update
-- `develop` was promoted to `main` at merge commit `0d90c42`.
-- `main` and `develop` were synchronized at `0d90c42`; this report-state update is
-  the only subsequent docs-only change.
+- `develop` was promoted to `main`; `main` and `develop` were then synchronized.
+  The README add/add conflict at promotion was resolved by keeping the complete
+  `develop` README and retaining the default-branch release-status notice.
+- Docs-only follow-ups (report state corrections, including PR #7) change no
+  code and are each covered by CI/CodeQL on their own branch. The exact final
+  commit hashes are recorded in the delivery summary; no code commit follows the
+  `a9ee037` CLI implementation.
 - No force-push, history rewrite, or tag was created. Feature branches were
   retained.
 
