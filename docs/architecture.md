@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 2 configuration implemented; `version`, `init`, and `validate` are operational |
+| Status | Phase 3 health probe and monitoring implemented; `version`, `init`, `validate`, `check`, and `monitor` are operational (in-memory threshold state only) |
 | Audience | Contributors and maintainers |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [CLI contract](cli-contract.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md) |
 
@@ -24,21 +24,27 @@ This is pragmatic layering, not a full Clean Architecture or DDD framework. Ther
 is no plugin system, dependency-injection container, generic repository
 abstraction, or interface for every struct.
 
-## 2. Current Phase 2 Implementation
+## 2. Current Phase 3 Implementation
 
 The repository currently contains:
 
 ```text
 cmd/abouei-checker/       process entry point and signal context
-internal/app/             composition root, global options, shared errors, config loading
+internal/app/             composition root, global options, shared errors, config loading,
+                          one-shot check and continuous monitor orchestration
 internal/buildinfo/       linker-injected build metadata
 internal/cli/             Cobra command tree, global flags, rendering, exit mapping
 internal/config/          discovery, strict YAML loading, expansion, validation, init template
 internal/logging/         slog handlers, level/format parsing, redaction boundary
+internal/monitor/         in-memory streak tracker, one-shot fan-out, per-backend scheduler
+internal/probe/           safe HTTP client, request construction, status/body criteria, results
 ```
 
-`version`, `init`, and `validate` perform work. `validate` loads and validates
-configuration; `version` and `init` never read YAML. The CLI accepts
+`version`, `init`, `validate`, `check`, and `monitor` perform work. `validate`
+loads and validates configuration; `version` and `init` never read YAML.
+`check` and `monitor` load configuration and probe endpoints but open no SQLite
+database, create no incidents, and deliver no notifications: threshold streaks
+are in-memory only. The CLI accepts
 `--config`, `--log-level`, and `--output` for every command. The package layout
 below describes intended ownership for later phases; empty placeholder packages
 are deliberately not created.
@@ -305,7 +311,8 @@ Logging uses `log/slog` with `DEBUG`, `INFO`, `WARN`, and `ERROR` levels.
 - Timestamps are UTC and use a fixed RFC3339 format with milliseconds. Stable
   field names include `component`, `command`, `backend_id`, `operation`,
   `duration_ms`, `http_status`, `failure_reason`, `outcome`, `attempt`,
-  `error_category`, and `error_code`.
+  `error_category`, `error_code`, `consecutive_failures`, `failure_threshold`,
+  and `threshold_reached` (the last three added in Phase 3 for streak reporting).
 - `internal/logging` enforces an allowlist of safe field names. Unknown fields,
   groups, maps, structs, and non-error `any` values have their values redacted.
   Resolved secrets registered with the redactor are replaced literally, and URL

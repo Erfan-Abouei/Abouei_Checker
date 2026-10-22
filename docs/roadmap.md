@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 0 and 1 complete; Phase 2 implemented and locally verified; Phases 3–7 pending |
+| Status | Phase 0–2 complete; Phase 3 implemented and locally verified; Phases 4–7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -159,6 +159,12 @@ registry, and secret resolution, including the `init` and `validate` commands.
 - Coverage floor reaches at least 70%.
 
 ## 5. Phase 3 — Health Probe & Monitoring Engine
+
+**Status:** Implemented on `feature/phase-3-health-check-engine` with local
+verification; remote CI/CodeQL evidence recorded in the
+[Phase 3 completion report](phase-3-completion.md). `check` and `monitor` run
+with in-memory threshold streaks only; durable incidents, persistence, and
+webhook delivery remain Phase 4 work.
 
 ### Objective
 

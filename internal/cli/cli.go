@@ -91,9 +91,9 @@ func newRootCommand(stdout, stderr io.Writer, newApp appFactory) (*cobra.Command
 		Long: `AboueiChecker periodically probes backend health endpoints, records
 observations and incidents, and delivers configurable webhook notifications.
 
-The version, init, and validate commands are implemented. Monitoring commands
-remain planned: they are intentionally not registered until their full
-contracts are implemented.`,
+The version, init, validate, check, and monitor commands are implemented.
+check and monitor keep threshold state in memory only; SQLite persistence,
+incidents, and notifications arrive in later phases.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -162,6 +162,8 @@ contracts are implemented.`,
 	root.AddCommand(newVersionCommand(state, stdout))
 	root.AddCommand(newValidateCommand(state, stdout))
 	root.AddCommand(newInitCommand(state, stdout))
+	root.AddCommand(newCheckCommand(state, stdout))
+	root.AddCommand(newMonitorCommand(state, stdout))
 	root.SetHelpCommand(newHelpCommand(root))
 	// Initialize Cobra's help and completion commands before Execute so the
 	// unknown-command pre-check can find them. Cobra also calls these during
@@ -405,6 +407,17 @@ func parseOutputFormat(raw string) (outputFormat, error) {
 }
 
 func reportError(err error, stdout, stderr io.Writer, state *commandState) int {
+	if _, alreadyWritten := asOutputWritten(err); alreadyWritten {
+		message := app.SafeMessage(err)
+		if message == "" {
+			message = "internal error"
+		}
+		if state != nil && state.application != nil {
+			message = state.application.Redactor().RedactString(message)
+		}
+		_, _ = fmt.Fprintf(stderr, "Error: %s\n", message)
+		return ExitCodeFor(err)
+	}
 	message := app.SafeMessage(err)
 	if message == "" {
 		message = "internal error"
