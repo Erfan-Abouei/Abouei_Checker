@@ -294,36 +294,44 @@ func nullErrorSummary(summary string) any {
 
 // ListOpenIncidents returns every open incident for startup reconciliation.
 func (s *Store) ListOpenIncidents(ctx context.Context) ([]IncidentRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	var incidents []IncidentRow
+	err := withTransientRetry(ctx, func() error {
+		rows, err := s.db.QueryContext(ctx, `
 SELECT id, backend_id, state, opened_at_ms, first_failure_at_ms,
        last_failure_at_ms, resolved_at_ms, failure_count, recovery_count,
        next_reminder_at_ms, reminder_count
 FROM incidents WHERE state='open' ORDER BY opened_at_ms ASC`)
-	if err != nil {
-		return nil, &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
-	}
-	defer func() { _ = rows.Close() }()
-	var incidents []IncidentRow
-	for rows.Next() {
-		var row IncidentRow
-		var opened, first int64
-		var lastFailure, resolved, nextReminder sql.NullInt64
-		if err := rows.Scan(
-			&row.ID, &row.BackendID, &row.State, &opened, &first,
-			&lastFailure, &resolved, &row.FailureCount, &row.RecoveryCount,
-			&nextReminder, &row.ReminderCount,
-		); err != nil {
-			return nil, &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+		if err != nil {
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
 		}
-		row.OpenedAt = millisToTime(opened)
-		row.FirstFailureAt = millisToTime(first)
-		row.LastFailureAt = nullTime(lastFailure)
-		row.ResolvedAt = nullTime(resolved)
-		row.NextReminderAt = nullTime(nextReminder)
-		incidents = append(incidents, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+		defer func() { _ = rows.Close() }()
+		var listed []IncidentRow
+		for rows.Next() {
+			var row IncidentRow
+			var opened, first int64
+			var lastFailure, resolved, nextReminder sql.NullInt64
+			if err := rows.Scan(
+				&row.ID, &row.BackendID, &row.State, &opened, &first,
+				&lastFailure, &resolved, &row.FailureCount, &row.RecoveryCount,
+				&nextReminder, &row.ReminderCount,
+			); err != nil {
+				return &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+			}
+			row.OpenedAt = millisToTime(opened)
+			row.FirstFailureAt = millisToTime(first)
+			row.LastFailureAt = nullTime(lastFailure)
+			row.ResolvedAt = nullTime(resolved)
+			row.NextReminderAt = nullTime(nextReminder)
+			listed = append(listed, row)
+		}
+		if err := rows.Err(); err != nil {
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+		}
+		incidents = listed
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return incidents, nil
 }
@@ -332,34 +340,49 @@ FROM incidents WHERE state='open' ORDER BY opened_at_ms ASC`)
 // so restarts never lose threshold state. It reports whether it created a
 // row; callers log a warning in that case.
 func (s *Store) EnsureBackendState(ctx context.Context, backendID string, open *IncidentRow) (bool, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM backend_state WHERE backend_id=?`, backendID,
-	).Scan(&count); err != nil {
-		return false, &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
-	}
-	if count > 0 {
-		return false, nil
-	}
-	failures := 0
-	var first any
-	var outcome any = "healthy"
-	if open != nil {
-		failures = open.FailureCount
-		first = nowMillis(open.FirstFailureAt)
-		outcome = "failed"
-	}
-	now := time.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	var created bool
+	err := withTransientRetry(ctx, func() error {
+		var count int
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM backend_state WHERE backend_id=?`, backendID,
+		).Scan(&count); err != nil {
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+		}
+		if count > 0 {
+			created = false
+			return nil
+		}
+		failures := 0
+		var first any
+		var outcome any = "healthy"
+		if open != nil {
+			failures = open.FailureCount
+			first = nowMillis(open.FirstFailureAt)
+			outcome = "failed"
+		}
+		now := time.Now().UTC()
+		if _, err := s.db.ExecContext(ctx, `
 INSERT INTO backend_state
   (backend_id, consecutive_failures, consecutive_successes, first_failure_at_ms,
    last_outcome, last_status_code, last_observed_at_ms, updated_at_ms)
 VALUES (?, ?, 0, ?, ?, NULL, NULL, ?)`,
-		backendID, failures, first, outcome, nowMillis(now),
-	); err != nil {
-		return false, &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+			backendID, failures, first, outcome, nowMillis(now),
+		); err != nil {
+			// A concurrent reconciler may have inserted the row first;
+			// the state is ensured either way.
+			if isConcurrentCreation(err.Error()) {
+				created = false
+				return nil
+			}
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot read incident state", cause: err}
+		}
+		created = true
+		return nil
+	})
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	return created, nil
 }
 
 // resetStaleDelivering returns in-flight claims to pending at startup. The
@@ -495,10 +518,16 @@ WHERE id=? AND status='delivering'`,
 // visibility.
 func (s *Store) CountPending(ctx context.Context) (int, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `
+	err := withTransientRetry(ctx, func() error {
+		if err := s.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM notification_events
 WHERE status IN ('pending','delivering','failed')`).Scan(&count); err != nil {
-		return 0, &OpenError{Reason: "internal", Path: s.path, Message: "cannot read notification outbox", cause: err}
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot read notification outbox", cause: err}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return count, nil
 }

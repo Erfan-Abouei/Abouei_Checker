@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,14 @@ const (
 	SupportedSchemaVersion = 1
 
 	busyTimeoutMs = 5000
+
+	// openMaxAttempts and openRetryDelay bound retries when several
+	// processes initialize the same database file concurrently (for
+	// example, overlapping one-shot cron runs racing creation, WAL setup,
+	// or migration). Only lock-contention errors retry; permissions,
+	// schema, and corruption failures return immediately.
+	openMaxAttempts = 25
+	openRetryDelay  = 200 * time.Millisecond
 )
 
 // OpenError classifies failures to initialize the database so the CLI can map
@@ -114,10 +123,39 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", "file:"+clean+"?_pragma=busy_timeout%3D5000")
-	if err != nil {
-		return nil, &OpenError{Reason: "internal", Path: clean, Message: "cannot open monitoring database", cause: err}
+	openDB := func() (*sql.DB, error) {
+		db, err := sql.Open("sqlite", "file:"+clean+"?_pragma=busy_timeout%3D5000")
+		if err != nil {
+			return nil, &OpenError{Reason: "internal", Path: clean, Message: "cannot open monitoring database", cause: err}
+		}
+		return db, nil
 	}
+	// Concurrent creators race WAL setup, migration DDL, and the stale
+	// delivery reset. Retry only transient lock contention with a fresh
+	// handle per attempt; permanent failures fail closed immediately.
+	for attempt := 1; ; attempt++ {
+		db, err := openDB()
+		if err != nil {
+			return nil, err
+		}
+		store, initErr := initialize(clean, created, db)
+		if initErr == nil {
+			return store, nil
+		}
+		_ = db.Close()
+		if !isOpenRetryable(initErr) || attempt >= openMaxAttempts {
+			return nil, initErr
+		}
+		time.Sleep(openRetryDelay)
+	}
+}
+
+// initialize applies pragmas, migrations, file protection, and the stale
+// delivery reset on an already-opened handle. It never closes the handle;
+// the caller owns it and closes it when initialization ultimately fails.
+// existed reports whether the database file already existed before this
+// process opened it; a concurrent creator may have created it since.
+func initialize(clean string, existed bool, db *sql.DB) (*Store, error) {
 	store := &Store{db: db, path: clean}
 	// One writer connection serializes transactions and avoids SQLITE_BUSY
 	// complexity under the single-process assumption.
@@ -126,22 +164,131 @@ func Open(path string) (*Store, error) {
 	db.SetConnMaxIdleTime(0)
 
 	if err := store.applyPragmas(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	if err := store.migrate(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
-	if err := store.chmodIfCreated(created); err != nil {
-		_ = db.Close()
+	if err := store.chmodIfCreated(existed); err != nil {
 		return nil, err
 	}
 	if err := store.resetStaleDelivering(context.Background()); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+// IsTransient reports whether err reflects transient cross-process SQLite
+// contention (lock waits or concurrent creation races) that a bounded retry
+// may resolve. Permanent failures (permissions, schema, corruption without
+// a contention signature) return false so callers still fail closed.
+func IsTransient(err error) bool {
+	return isLockContention(err)
+}
+
+// withTransientRetry executes fn until it succeeds, the context ends, the
+// error is permanent, or the attempt budget is exhausted. It exists for
+// overlapping writers (cron one-shots racing each other or a monitor):
+// SQLite serializes writers, and the loser observes a transient busy error
+// that a short retry resolves. Every retried operation is idempotent or
+// fully rolled back, so retries never duplicate incidents or events.
+func withTransientRetry(ctx context.Context, fn func() error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		if !isLockContention(err) || attempt >= openMaxAttempts {
+			return err
+		}
+		timer := time.NewTimer(openRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return err
+		case <-timer.C:
+		}
+	}
+}
+
+// isOpenRetryable reports whether an initialization failure may resolve by
+// reopening after a short delay. "corrupt" and "migration" reasons can wrap
+// transient cross-process contention (creation races, WAL setup, concurrent
+// DDL), and "schema_inconsistent" can be a torn read of a concurrent
+// creator's commit landing between the version and table checks. Every
+// other reason (path, permissions, schema_newer, internal) is permanent and
+// must fail closed on the first attempt. The budget stays bounded, so a
+// genuinely broken database still fails closed — a few seconds later.
+func isOpenRetryable(err error) bool {
+	var openErr *OpenError
+	if !errors.As(err, &openErr) {
+		return isLockContention(err)
+	}
+	switch openErr.Reason {
+	case "corrupt", "migration", "schema_inconsistent":
+	default:
+		return false
+	}
+	if cause := openErr.Unwrap(); cause != nil {
+		message := cause.Error()
+		if isBusyMessage(message) || isConcurrentCreation(message) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLockContention reports whether any level of err's chain carries a
+// transient SQLite lock signature. It walks the full unwrap chain so both
+// driver errors and wrapped application errors are recognized. Only lock
+// waits retry at runtime; concurrent-creation conflicts are an
+// initialization-only concern handled by isOpenRetryable.
+func isLockContention(err error) bool {
+	for err != nil {
+		if isBusyMessage(err.Error()) {
+			return true
+		}
+		unwrapped, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return false
+		}
+		err = unwrapped.Unwrap()
+	}
+	return false
+}
+
+// isConcurrentCreation matches the DDL conflict when two processes
+// initialize the same fresh database file at once: both observe version 0
+// and both attempt the same CREATE TABLE. The loser's transaction rolls
+// back; retrying lets it observe the winner's committed schema. The retry
+// budget stays bounded, and a genuinely inconsistent schema still fails
+// closed once the winner's version is absent.
+func isConcurrentCreation(message string) bool {
+	return strings.Contains(strings.ToLower(message), "already exists")
+}
+
+// isBusyMessage matches the SQLite SQLITE_BUSY family without importing
+// driver internals: the busy timeout already covers short intra-process
+// waits, so anything surfacing here is cross-process contention.
+func isBusyMessage(message string) bool {
+	lowered := strings.ToLower(message)
+	for _, fragment := range []string{
+		"database is locked",
+		"database table is locked",
+		"database schema is locked",
+		"sqlite_busy",
+	} {
+		if strings.Contains(lowered, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close releases the database connection.

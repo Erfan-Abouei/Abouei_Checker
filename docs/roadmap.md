@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phases 0–4 complete; Phase 5 implemented and locally verified; Phases 6–7 pending |
+| Status | Phases 0–5 complete; Phase 6 implemented and locally verified; Phase 7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -295,6 +295,11 @@ Complete persistence-facing commands and operational data management.
 - Race and permission tests pass.
 
 ## 8. Phase 6 — Integration, Reliability & Security Validation
+
+**Status:** Implemented with local verification; evidence recorded in the
+[Phase 6 completion report](phase-6-completion.md). Remote CI/CodeQL evidence
+is pending a push. `govulncheck` is blocked locally by proxy restrictions
+(HTTP 403 from the vulnerability database) and must be rerun in CI.
 
 ### Objective
 

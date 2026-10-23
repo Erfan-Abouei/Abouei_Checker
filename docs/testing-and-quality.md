@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 4 incident, persistence, and notification tests implemented; history/status and end-to-end suites planned for Phase 5+ |
+| Status | Phases 0–6 implemented and locally verified; see phase-6-completion.md. Remote CI/CodeQL evidence pending a push. |
 | Go toolchain | 1.27.3 |
 | Related | [Architecture](architecture.md), [Release checklist](release-checklist.md), [Security](security.md) |
 
@@ -122,8 +122,11 @@ pinned to `v2.15.0`. Do not use an unpinned `latest` in CI.
 - Unit tests live beside their packages (`*_test.go`).
 - Pure domain tests (incident thresholds, payload encoding, config validation)
   use table-driven cases.
-- Local HTTP integration tests use in-process test servers and live in the owning
-  package or `test/integration`.
+- Cross-component integration tests live in `internal/integration/`
+  (CLI-driven journeys plus built-binary E2E via `TestMain`); local HTTP
+  doubles use `httptest` servers and temporary SQLite. There is no top-level
+  `test/` tree: keeping integration tests inside `internal/` preserves Go
+  package ownership and the `internal/` import boundary.
 - End-to-end tests build/run the binary against local servers and a temporary
   database; they must not need root or Docker.
 - Docker validation is a dedicated script/job, not a default unit test.
