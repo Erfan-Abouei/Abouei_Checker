@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 4 incident lifecycle, SQLite persistence, and webhook notifications implemented; `check` and `monitor` are durable; `status`/`history` remain Phase 5 |
+| Status | Phase 5 operational commands, retention, and recovery hardening implemented; `check`, `monitor`, `status`, and `history` are durable; retention runs on writable startup |
 | Audience | Contributors and maintainers |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [CLI contract](cli-contract.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md) |
 
@@ -24,7 +24,7 @@ This is pragmatic layering, not a full Clean Architecture or DDD framework. Ther
 is no plugin system, dependency-injection container, generic repository
 abstraction, or interface for every struct.
 
-## 2. Current Phase 4 Implementation
+## 2. Current Phase 5 Implementation
 
 The repository currently contains:
 
@@ -32,9 +32,11 @@ The repository currently contains:
 cmd/abouei-checker/       process entry point and signal context
 internal/app/             composition root, global options, shared errors, config loading,
                           one-shot check and continuous monitor orchestration,
-                          store lifecycle and notification worker wiring
+                          store lifecycle and notification worker wiring,
+                          read-only status/history composition, retention policy
 internal/buildinfo/       linker-injected build metadata
 internal/cli/             Cobra command tree, global flags, rendering, exit mapping
+                          (version, init, validate, check, monitor, status, history)
 internal/config/          discovery, strict YAML loading, expansion, validation, init template
 internal/incident/        threshold evaluation, incident transitions, event identity, reminder policy
 internal/logging/         slog handlers, level/format parsing, redaction boundary
@@ -43,16 +45,21 @@ internal/notify/          webhook payload encoding, HTTP delivery, retry classif
                           idempotency header, durable outbox worker
 internal/probe/           safe HTTP client, request construction, status/body criteria, results
 internal/store/           SQLite connection, migration 1, transactions, threshold/incident
-                          state, observations, notification outbox
+                          state, observations, notification outbox, read-only
+                          queries, batched retention
 ```
 
-`version`, `init`, `validate`, `check`, and `monitor` perform work. `validate`
-loads and validates configuration; `version` and `init` never read YAML.
+`version`, `init`, `validate`, `check`, `monitor`, `status`, and `history`
+perform work. `validate` loads and validates configuration; `version` and
+`init` never read YAML.
 `check` and `monitor` load configuration, open and migrate SQLite, apply each
 probe result in a transaction (observation, streaks, incident transition, and
-outbox insert commit atomically), and deliver due webhook events with bounded
-retries. Threshold streaks, incidents, and notification intent persist across
-restarts. The CLI accepts
+outbox insert commit atomically), run best-effort retention on startup, and
+deliver due webhook events with bounded retries. Threshold streaks, incidents,
+and notification intent persist across
+restarts. `status` and `history` load configuration, open the same SQLite file
+read-only, and render persisted state without probing or mutating it; a
+missing database fails with a hint to run `check` or `monitor` first. The CLI accepts
 `--config`, `--log-level`, and `--output` for every command. The package layout
 below describes intended ownership for later phases; empty placeholder packages
 are deliberately not created.
@@ -196,7 +203,9 @@ are retried on the next process start.
 `version` and `init` do not require configuration or a database. `validate`
 loads and validates configuration but does not open SQLite, probe endpoints, or
 deliver notifications. `status` and `history` open the database read-only in
-behavioral terms; they do not probe or create notifications.
+behavioral and mechanical terms (`mode=ro`: no creation, no migration, no
+delivery-claim reset); they do not probe or create notifications. Orphaned
+incidents are listed, never auto-closed.
 
 ## 6. Configuration Flow
 
@@ -258,6 +267,11 @@ SQLite is the source of truth for runtime history and recovery state:
 - incidents;
 - durable notification events and their delivery state;
 - minimal metadata required for retention.
+
+Retention deletes only expired terminal rows in bounded batches and never
+touches open incidents, pending/delivering/failed events, or backend state.
+Read-only status/history queries share the same tables through a `mode=ro`
+handle with a bounded (30s) query context.
 
 Configuration remains the source of truth for backend definitions and policy.
 Backend IDs reference configuration identities; the database does not store an
@@ -321,7 +335,10 @@ Logging uses `log/slog` with `DEBUG`, `INFO`, `WARN`, and `ERROR` levels.
   `duration_ms`, `http_status`, `failure_reason`, `outcome`, `attempt`,
   `error_category`, `error_code`, `consecutive_failures`, `failure_threshold`,
   and `threshold_reached` (the last three added in Phase 3 for streak reporting),
-  plus `incident_id` and `incident_status` (added in Phase 4 for incident reporting).
+  plus `incident_id` and `incident_status` (added in Phase 4 for incident reporting),
+  plus `backend_count`, `open_incidents`, `observation_count`, `event_count`,
+  `observations_deleted`, `events_deleted`, and `incidents_deleted` (added in
+  Phase 5 for operational and retention reporting).
 - `internal/logging` enforces an allowlist of safe field names. Unknown fields,
   groups, maps, structs, and non-error `any` values have their values redacted.
   Resolved secrets registered with the redactor are replaced literally, and URL

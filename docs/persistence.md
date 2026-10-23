@@ -2,14 +2,16 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 4 implementation; migration 1 (`backend_state`, `incidents`, `observations`, `notification_events`) with transactional probe and outbox boundaries implemented |
+| Status | Phase 5 implementation; migration 1 (`backend_state`, `incidents`, `observations`, `notification_events`) with read-only queries, batched retention, and restart reconciliation implemented |
 | Engine | SQLite (single file) |
-| Driver decision | `modernc.org/sqlite` (pure Go) planned |
+| Driver decision | `modernc.org/sqlite` (pure Go) implemented in Phase 4 |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Security](security.md) |
 
 SQLite is the persistence source of truth for monitoring history and recovery
 state. Configuration remains the source of truth for backend definitions and
-policy. The current Phase 0 executable does not open a database.
+policy. `status` and `history` open the database read-only (`mode=ro`): they
+never create directories or files, never migrate, and never reset delivery
+claims.
 
 ## 1. Responsibilities and Boundaries
 
@@ -277,13 +279,20 @@ CREATE INDEX notification_events_incident
 | --- | --- |
 | Empty file, version 0 | Create schema, set version 1 |
 | Version 1, binary supports 1 | Normal operation |
-| Version > supported | Fail with upgrade guidance |
-| Version < supported | Apply sequential migrations |
-| Corrupt/inconsistent | Fail; no destructive repair |
+| Version > supported | Fail with exit `3` and upgrade guidance |
+| Version < supported | Apply sequential migrations (writable open only) |
+| Version < supported on a read-only open | Fail with exit `3`; rerun a writable command to migrate |
+| Corrupt/inconsistent | Fail closed; no destructive repair |
 | Read-only and version mismatch | Fail; requires writable migration run |
+| Read-only open with a missing file | Fail with exit `3` and a hint to run `check`/`monitor` first |
 
-The proposed initial schema is migration 1. Phase 4 may refine it before it is
-frozen; once released, changes require migration 2.
+The proposed initial schema is migration 1. Phase 4 froze it; once released,
+changes require migration 2. Phase 5 adds no schema change: status/history
+queries and retention run on migration 1 with the existing indexes
+(`observations_backend_time`, `observations_time`,
+`incidents_backend_opened`, `incidents_open`, `notification_events_due`,
+`notification_events_incident`), which already serve the newest-first,
+backend-filtered query patterns.
 
 ## 6. Transaction Boundaries
 
@@ -374,6 +383,15 @@ Retention behavior:
   warning and does not stop monitoring.
 - Retention is local and best-effort; operators who need a compliance archive
   must export data before it expires.
+- Phase 5 implementation: `ApplyRetention` deletes in bounded batches (500
+  rows for observations and terminal events, 200 for closed incidents, one
+  committed statement per batch) so cleanup never holds a long write lock.
+  Each predicate is a pure age-and-state filter, which makes reruns safe and
+  deterministic. Closed incidents are eligible only when no
+  pending/delivering/failed event references them; dead events cascade with
+  their incident. `check` and `monitor` run retention once on startup and the
+  monitor reruns it at most every 24 hours; failures log a warning and never
+  stop monitoring or fail a one-shot command.
 
 Backup guidance:
 

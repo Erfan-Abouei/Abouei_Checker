@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 4 controls implemented: webhook payload redaction, TLS verification, redirect rejection, credential-safe delivery, SQLite file permissions, and sanitized persisted errors |
+| Status | Phase 5 controls implemented and extended: read-only operational output, retention guards, and secret-free status/history verified by tests |
 | Related | [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md), [Persistence](persistence.md), [Testing](testing-and-quality.md) |
 
 Security is a release gate, not a Phase 0 claim. This document defines the
@@ -80,8 +80,12 @@ variables are errors. See
 9. Panics are avoided in request paths. Any unexpected panic must not be recovered
    by dumping configuration or request structures.
 10. `status`/`history` output omits secrets because secrets are never stored.
+    Phase 5 verifies this with tests asserting that resolved header values,
+    webhook URL tokens, and endpoint URLs never appear in operational stdout,
+    stderr, JSON, or the SQLite file.
 11. Backups and database files are operational data, not secret stores, but
-    should still be permission-protected.
+    should still be permission-protected (`0600` files, `0700` directories,
+    verified by tests on creation paths).
 
 ### 3.3 Redaction strategy
 
@@ -239,9 +243,12 @@ Headers:
 - Use `log/slog` to stderr.
 - Levels: `DEBUG`, `INFO`, `WARN`, `ERROR`; the CLI accepts them
   case-insensitively.
-- Safe fields include `component`, `command`, `backend_id`, `incident_id`,
-  `event_id`, `operation`, `duration_ms`, `http_status`, `failure_reason`,
-  `outcome`, `attempt`, `error_category`, and `error_code`.
+- Safe fields include `component`, `command`, `backend_id`, `backend_count`,
+  `incident_id`, `event_id`, `operation`, `duration_ms`, `http_status`,
+  `failure_reason`, `outcome`, `attempt`, `error_category`, `error_code`,
+  `consecutive_failures`, `failure_threshold`, `threshold_reached`,
+  `incident_status`, `open_incidents`, `observation_count`, `event_count`,
+  `observations_deleted`, `events_deleted`, and `incidents_deleted`.
 - Never log header values, query strings, full URLs, bodies, or resolved env
   values.
 - Do not log the full configuration at startup. Log a summary such as backend
