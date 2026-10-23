@@ -74,6 +74,7 @@ these fixes and the specified TUI-default addition.
 | Clean-room `npm install` of packed tarball + launcher via override binary | `version` exit 0, `--help` OK |
 | `govulncheck ./...` | **blocked**: vuln DB unreachable (HTTP 403 via proxy) |
 | CodeQL / remote CI | not executed locally; runs on push |
+| Docker build | **blocked**: proxy 403 on `go mod download` inside container; rerun in CI |
 | 8-way concurrent fresh-DB stress (binary, 10 rounds) | 0/80 `database_unavailable` |
 
 ## 4. Branding compatibility (verified)
@@ -88,8 +89,10 @@ these fixes and the specified TUI-default addition.
 ## 5. Remaining Phase 6 gaps / blockers
 
 - `govulncheck` needs network to the vulnerability database; rerun in CI.
-- Docker hardening re-validation (`make docker-build` + volume/signal
-  checks) after these changes — quick, but not yet re-run.
+- Docker hardening re-validation is **blocked**: `docker build` fails at
+  `go mod download` because the proxy returns HTTP 403 for
+  `modernc.org/sqlite`/`libc` zips inside the container (same restricted
+  egress as `govulncheck`). Rerun in CI.
 - Windows/macOS runtime evidence still CI/release-gated (compile-only
   locally by design).
 - The 500ms backoff wait in the transient-webhook test is the only
