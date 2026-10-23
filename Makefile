@@ -4,7 +4,7 @@ SHELL := /bin/sh
 BINARY := abouei-checker
 MODULE := $(shell go list -m)
 GO ?= go
-VERSION ?= dev
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 COVERAGE_MIN ?= 80
@@ -14,7 +14,7 @@ LDFLAGS := -s -w \
 	-X $(MODULE)/internal/buildinfo.Commit=$(COMMIT) \
 	-X $(MODULE)/internal/buildinfo.BuildDate=$(BUILD_DATE)
 
-.PHONY: help build fmt fmt-check vet lint test test-race cover cover-check vuln cross-build docker-build check verify clean
+.PHONY: help build fmt fmt-check vet lint test test-race cover cover-check vuln cross-build docker-build npm-test npm-pack check verify clean
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,6 +66,12 @@ docker-build: ## Build the container image locally
 		--build-arg COMMIT="$(COMMIT)" \
 		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		-t $(BINARY):dev .
+
+npm-test: ## Run npm wrapper tests and version alignment
+	cd npm && ABOUEI_CHECKER_SKIP_POSTINSTALL=1 npm test && npm run check-versions
+
+npm-pack: ## Validate npm package contents (dry run)
+	cd npm && npm pack --dry-run
 
 check: fmt-check vet test-race cover-check ## Run local checks that do not need extra tools
 

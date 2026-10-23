@@ -94,25 +94,33 @@ func (s *Store) ProcessResult(
 	}
 	now = now.UTC()
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return ProcessOutcome{}, &OpenError{Reason: "internal", Path: s.path, Message: "cannot persist probe result", cause: err}
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	var outcome ProcessOutcome
+	err := withTransientRetry(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot persist probe result", cause: err}
 		}
-	}()
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
 
-	outcome, err := s.processInTx(ctx, tx, backend, result, now)
+		result, err := s.processInTx(ctx, tx, backend, result, now)
+		if err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return &OpenError{Reason: "internal", Path: s.path, Message: "cannot persist probe result", cause: err}
+		}
+		committed = true
+		outcome = result
+		return nil
+	})
 	if err != nil {
 		return ProcessOutcome{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return ProcessOutcome{}, &OpenError{Reason: "internal", Path: s.path, Message: "cannot persist probe result", cause: err}
-	}
-	committed = true
 	return outcome, nil
 }
 

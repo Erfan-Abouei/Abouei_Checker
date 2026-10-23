@@ -6,6 +6,8 @@ technical question within those requirements.
 
 | ADR | Title | Status |
 | --- | --- | --- |
+| [0007](0007-interactive-tui-dashboard.md) | Interactive TUI dashboard | Accepted |
+| --- | --- | --- |
 | [0001](0001-modular-layout-and-dependencies.md) | Modular layout, dependency direction, and dependency set | Accepted |
 | [0002](0002-configuration-and-persistence-boundaries.md) | Configuration and persistence boundaries | Accepted |
 | [0003](0003-webhook-delivery-and-idempotency.md) | Webhook delivery, outbox, and idempotency | Accepted |

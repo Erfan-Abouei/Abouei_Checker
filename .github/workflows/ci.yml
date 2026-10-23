@@ -123,3 +123,30 @@ jobs:
         run: |
           test "$(docker image inspect -f '{{.Config.User}}' abouei-checker:ci)" = "65532:65532"
           test "$(docker image inspect -f '{{json .Config.Entrypoint}}' abouei-checker:ci)" = '["/usr/local/bin/abouei-checker"]'
+
+  npm:
+    name: npm wrapper validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Run npm tests
+        working-directory: npm
+        env:
+          ABOUEI_CHECKER_SKIP_POSTINSTALL: "1"
+        run: npm test
+
+      - name: Check version alignment
+        working-directory: npm
+        run: npm run check-versions
+
+      - name: Validate package contents
+        working-directory: npm
+        run: npm pack --dry-run

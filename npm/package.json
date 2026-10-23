@@ -1,0 +1,42 @@
+{
+  "name": "abouei-checker",
+  "version": "0.6.0",
+  "description": "ABOUEI backend health monitoring: probe HTTP endpoints, track incidents, and get webhook alerts. Global installer for the abouei-checker Go binary with a premium interactive TUI.",
+  "license": "MIT",
+  "author": "Erfan Abouei",
+  "homepage": "https://github.com/Erfan-Abouei/Abouei_Checker",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Erfan-Abouei/Abouei_Checker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Erfan-Abouei/Abouei_Checker/issues"
+  },
+  "keywords": [
+    "health-check",
+    "monitoring",
+    "uptime",
+    "cli",
+    "tui",
+    "webhook",
+    "incident"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "abouei-checker": "./bin/abouei-checker.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "postinstall": "node lib/install.js",
+    "check-versions": "node lib/check-versions.js",
+    "prepack": "cp ../LICENSE ./LICENSE"
+  }
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/app"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/term"
 )
 
 // outputWrittenError marks an error for which the command already wrote its
@@ -133,22 +134,78 @@ func checkUnhealthyMessage(summary app.CheckSummary) string {
 }
 
 func writeCheckText(w io.Writer, results []app.CheckResult, summary app.CheckSummary) error {
+	style := term.ForWriter(w)
+	if !style.Enabled {
+		for _, result := range results {
+			line := formatCheckLine(result)
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+		}
+		summaryLine := fmt.Sprintf(
+			"Summary: %d healthy, %d unhealthy, %d canceled of %d backends; %d incidents opened, %d closed; %d notifications attempted, %d failed",
+			summary.Healthy, summary.Unhealthy, summary.Canceled, summary.Total,
+			summary.IncidentsOpened, summary.IncidentsClosed,
+			summary.NotificationsAttempted, summary.NotificationsFailed,
+		)
+		if _, err := fmt.Fprintln(w, summaryLine); err != nil {
+			return err
+		}
+		return nil
+	}
 	for _, result := range results {
-		line := formatCheckLine(result)
-		if _, err := fmt.Fprintln(w, line); err != nil {
+		if _, err := fmt.Fprintln(w, formatCheckLineStyled(result, style)); err != nil {
 			return err
 		}
 	}
-	summaryLine := fmt.Sprintf(
-		"Summary: %d healthy, %d unhealthy, %d canceled of %d backends; %d incidents opened, %d closed; %d notifications attempted, %d failed",
+	rest := fmt.Sprintf(
+		"%d healthy, %d unhealthy, %d canceled of %d backends; %d incidents opened, %d closed; %d notifications attempted, %d failed",
 		summary.Healthy, summary.Unhealthy, summary.Canceled, summary.Total,
 		summary.IncidentsOpened, summary.IncidentsClosed,
 		summary.NotificationsAttempted, summary.NotificationsFailed,
 	)
-	if _, err := fmt.Fprintln(w, summaryLine); err != nil {
+	if _, err := fmt.Fprintln(w, style.SummaryLine(rest)); err != nil {
 		return err
 	}
+	if summary.NotificationsFailed > 0 {
+		if _, err := fmt.Fprintln(w, style.Danger("Warning: some webhook deliveries failed; events remain queued for retry.")); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// formatCheckLineStyled adds restrained color and width-aware truncation for
+// human terminals. Plain output (pipes/tests) always uses formatCheckLine so
+// bytes stay identical.
+func formatCheckLineStyled(result app.CheckResult, style term.Style) string {
+	id := style.Bold(style.Fit(result.BackendID, 48))
+	incident := style.IncidentTag(result.IncidentStatus)
+	if result.Outcome == "healthy" {
+		status := style.Status("healthy")
+		if result.HTTPStatus != 0 {
+			return fmt.Sprintf("%s: %s (%d in %s)%s",
+				id, status, result.HTTPStatus,
+				style.Muted(result.Duration.Truncate(time.Millisecond).String()), incident)
+		}
+		return fmt.Sprintf("%s: %s (in %s)%s",
+			id, status, style.Muted(result.Duration.Truncate(time.Millisecond).String()), incident)
+	}
+	status := style.Status(result.Outcome)
+	var detail strings.Builder
+	if result.HTTPStatus != 0 {
+		fmt.Fprintf(&detail, "%d", result.HTTPStatus)
+	} else {
+		detail.WriteString("no response")
+	}
+	detail.WriteString(" in ")
+	detail.WriteString(result.Duration.Truncate(time.Millisecond).String())
+	if result.Error != "" {
+		detail.WriteString(": ")
+		detail.WriteString(style.Fit(result.Error, 120))
+	}
+	fmt.Fprintf(&detail, " [streak %d/%d]", result.ConsecutiveFailures, result.FailureThreshold)
+	return fmt.Sprintf("%s: %s (%s)%s", id, status, style.Muted(detail.String()), incident)
 }
 
 func formatCheckLine(result app.CheckResult) string {

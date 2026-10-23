@@ -21,6 +21,7 @@ not be advertised as usable.
 | `monitor` | Implemented (Phase 4, durable) | Continuously schedule probes and notifications until graceful shutdown |
 | `status` | Implemented (Phase 5, read-only) | Read current backend and incident state from SQLite |
 | `history` | Implemented (Phase 5, read-only) | Read observations and incident transitions from SQLite |
+| `tui` | Implemented (Phase 6, interactive) | Open the live fullscreen dashboard; requires a TTY, rejects `--output json` |
 | root/help | Implemented | Show command help |
 
 Running the root command with no arguments prints help and exits `0`. Running an
@@ -233,6 +234,23 @@ abouei-checker history [--backend ID] [--since TIME] [--limit N]
 - Exit: `0` success; `2` config/usage error; `3` database error (a missing
   database fails with a hint to run `check` or `monitor` first). Empty history
   is a valid `0` result, not an error.
+
+### 3.8 `tui` (implemented in Phase 6, interactive)
+
+```text
+abouei-checker tui [--config PATH]
+```
+
+- Opens the fullscreen live dashboard: seeds from `status`, then runs one
+  continuous monitor and renders every probe. Quitting shuts monitoring down
+  gracefully. See [TUI usage](tui.md).
+- Human-only: `--output json` is a usage error (exit `2` with the standard
+  JSON error envelope). Both stdin and stdout must be interactive terminals;
+  otherwise exit `2` with a hint naming `check`, `status`, `history`, and
+  `monitor` as scriptable alternatives.
+- Exit: `0` clean quit (including SIGINT/SIGTERM cancellation); `2`
+  configuration, usage, or non-interactive environment; `3` internal failure.
+  The command never emits JSON documents or machine-readable streams.
 
 ## 4. One-Shot vs Continuous Behavior
 

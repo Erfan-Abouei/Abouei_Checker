@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/app"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/term"
 )
 
 func newStatusCommand(state *commandState, stdout io.Writer) *cobra.Command {
@@ -85,20 +86,66 @@ func statusUnhealthyMessage(report app.StatusReport) string {
 }
 
 func writeStatusText(w io.Writer, report app.StatusReport) error {
+	style := term.ForWriter(w)
+	if !style.Enabled {
+		for _, backend := range report.Backends {
+			if _, err := fmt.Fprintln(w, formatStatusLine(backend)); err != nil {
+				return err
+			}
+		}
+		summary := fmt.Sprintf(
+			"Summary: %d backends, %d open incidents, %d pending notifications, %d failed",
+			len(report.Backends), report.OpenIncidents,
+			report.PendingNotifications, report.FailedNotifications,
+		)
+		if _, err := fmt.Fprintln(w, summary); err != nil {
+			return err
+		}
+		return nil
+	}
 	for _, backend := range report.Backends {
-		if _, err := fmt.Fprintln(w, formatStatusLine(backend)); err != nil {
+		if _, err := fmt.Fprintln(w, formatStatusLineStyled(backend, style)); err != nil {
 			return err
 		}
 	}
-	summary := fmt.Sprintf(
-		"Summary: %d backends, %d open incidents, %d pending notifications, %d failed",
+	rest := fmt.Sprintf(
+		"%d backends, %d open incidents, %d pending notifications, %d failed",
 		len(report.Backends), report.OpenIncidents,
 		report.PendingNotifications, report.FailedNotifications,
 	)
-	if _, err := fmt.Fprintln(w, summary); err != nil {
+	if _, err := fmt.Fprintln(w, style.SummaryLine(rest)); err != nil {
 		return err
 	}
 	return nil
+}
+
+// formatStatusLineStyled mirrors formatStatusLine with restrained color and
+// truncation for human terminals.
+func formatStatusLineStyled(backend app.BackendStatus, style term.Style) string {
+	observed := "never observed"
+	if backend.LastObservedAt != nil {
+		observed = backend.LastObservedAt.UTC().Format(time.RFC3339)
+	}
+	statusCode := "no status"
+	if backend.LastStatusCode != nil {
+		statusCode = fmt.Sprintf("status %d", *backend.LastStatusCode)
+	}
+	incident := ""
+	if backend.OpenIncidentID != nil && *backend.OpenIncidentID != "" {
+		opened := ""
+		if backend.OpenedAt != nil {
+			opened = fmt.Sprintf(" since %s", backend.OpenedAt.UTC().Format(time.RFC3339))
+		}
+		incident = style.IncidentTag(*backend.OpenIncidentID + opened)
+		// Keep the historical "[incident <id> ...]" shape greppable: the
+		// accent wrapper preserves the inner text.
+	}
+	return fmt.Sprintf("%s: %s (last observed %s, %s, failures %d, successes %d)%s",
+		style.Bold(style.Fit(backend.BackendID, 48)),
+		style.Status(backend.Status),
+		style.Muted(style.Fit(observed, 48)),
+		style.Muted(statusCode),
+		backend.ConsecutiveFailures, backend.ConsecutiveSuccesses, incident)
 }
 
 func formatStatusLine(backend app.BackendStatus) string {

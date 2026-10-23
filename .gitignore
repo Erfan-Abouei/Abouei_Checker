@@ -3,6 +3,8 @@
 /dist/
 /coverage.out
 *.prof
+/npm/LICENSE
+/npm/*.tgz
 
 # Local configuration and data can contain secrets or runtime history.
 /abouei.yaml
