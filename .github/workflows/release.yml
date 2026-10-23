@@ -70,7 +70,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - goos: linux
@@ -99,6 +99,7 @@ jobs:
           cache: true
 
       - name: Build versioned binary
+        shell: bash
         env:
           VERSION: ${{ inputs.version }}
           COMMIT: ${{ github.sha }}
@@ -123,8 +124,9 @@ jobs:
           "./bin/abouei-checker${EXT}" version
 
       - name: Smoke test binary
+        shell: bash
         run: |
-          "./bin/${BIN_NAME}" version --output json | python3 -c "import json,sys; json.load(sys.stdin)"
+          "./bin/${BIN_NAME}" version --output json | grep -q '"status": "success"'
           "./bin/${BIN_NAME}" --help | grep -q "abouei-checker"
 
       - name: Archive with checksum
