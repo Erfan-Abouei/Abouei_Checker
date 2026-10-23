@@ -151,8 +151,18 @@ Limitations:
 - No `backup` command was added: the roadmap defers it and documents
   `VACUUM INTO`/online-backup plus stopped-process copies instead.
 
-## 6. Handoff to Phase 6
+## 6. Remote verification (observed after push)
 
+Push of the Phase 5 merge to `main` triggered GitHub Actions:
+
+- CI (push on `main`, run `39912570050`): `success` — jobs `Quality and
+  tests`, `Lint`, `Cross-platform build`, and `Container smoke test` all
+  `success`. The `Quality and tests` job runs the pinned `govulncheck` scan,
+  which closes the local environmental gap from §3.
+- CodeQL (push on `main`, run `39912570086`): `success`, no unresolved
+  high-severity findings.
+
+## 7. Handoff to Phase 6
 Phase 6 consumes as fixtures: `status`/`history` text and JSON with exit
 codes, retention windows and guards, read-only failure modes (missing,
 corrupt, directory, newer/older schema), restart preservation, and the
