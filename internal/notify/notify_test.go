@@ -448,6 +448,61 @@ func TestWorkerPermanentFailureIsDead(t *testing.T) {
 	}
 }
 
+// alwaysDueOutbox keeps returning the event as due even right after a
+// failure was recorded. It models the production race where a short retry
+// backoff elapses while the drain loop is still running.
+type alwaysDueOutbox struct {
+	event    *ClaimedEvent
+	attempts int
+	terminal string
+}
+
+func (f *alwaysDueOutbox) ClaimDueEvent(_ context.Context, _ time.Time) (*ClaimedEvent, error) {
+	if f.terminal != "" {
+		return nil, sql.ErrNoRows
+	}
+	f.attempts++
+	claimed := *f.event
+	claimed.AttemptCount = f.attempts
+	return &claimed, nil
+}
+
+func (f *alwaysDueOutbox) MarkDelivered(_ context.Context, _ string, _ time.Time) error {
+	f.terminal = "delivered"
+	return nil
+}
+
+func (f *alwaysDueOutbox) MarkFailed(_ context.Context, _ string, _ time.Time, _ string) error {
+	return nil
+}
+
+func (f *alwaysDueOutbox) MarkDead(_ context.Context, _ string, _ string) error {
+	f.terminal = "dead"
+	return nil
+}
+
+func TestWorkerAttemptsEachEventOncePerDrain(t *testing.T) {
+	outbox := &alwaysDueOutbox{event: testClaimed("event-1", "incident.opened")}
+	worker := NewWorker(WorkerOptions{
+		Outbox: outbox,
+		Send: func(_ context.Context, _ WebhookConfig, _ string, _ []byte) AttemptResult {
+			return AttemptResult{Err: errors.New("connection refused")}
+		},
+		Webhook: WebhookConfig{URL: "http://127.0.0.1:1/hook", Timeout: time.Second},
+		Retry:   RetryConfig{MaxAttempts: 5, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+	})
+	attempted, failed, err := worker.ProcessDue(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if attempted != 1 || failed != 1 {
+		t.Fatalf("attempted=%d failed=%d, want exactly one attempt per drain", attempted, failed)
+	}
+	if outbox.terminal != "" {
+		t.Fatalf("event must stay pending for the next drain, terminal=%q", outbox.terminal)
+	}
+}
+
 func TestWorkerHonorsRetryAfter(t *testing.T) {
 	outbox := newFakeOutbox(testClaimed("event-1", "incident.opened"))
 	worker := NewWorker(WorkerOptions{

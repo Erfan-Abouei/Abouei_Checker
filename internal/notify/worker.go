@@ -103,6 +103,12 @@ func (w *Worker) ProcessDue(ctx context.Context) (attempted, failed int, err err
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Each event is attempted at most once per drain. A failed attempt
+	// re-arms the event with a backoff; if that backoff elapses while the
+	// drain is still running, the event must wait for the next drain
+	// instead of being attempted twice in one pass. This keeps per-command
+	// attempt counts (and Check summaries) deterministic.
+	attemptedIDs := make(map[string]struct{})
 	for {
 		if ctx.Err() != nil {
 			return attempted, failed, ctx.Err()
@@ -115,6 +121,10 @@ func (w *Worker) ProcessDue(ctx context.Context) (attempted, failed int, err err
 			}
 			return attempted, failed, claimErr
 		}
+		if _, seen := attemptedIDs[claimed.ID]; seen {
+			return attempted, failed, nil
+		}
+		attemptedIDs[claimed.ID] = struct{}{}
 		attempted++
 		if w.attempt(ctx, claimed) {
 			failed++
