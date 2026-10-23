@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -237,37 +238,65 @@ func TestTransientWebhookFailureDeliveredOnceAcrossRestart(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer backend.Close()
-	// Fail twice with a retryable 500, then succeed. The first check run
-	// exhausts its attempts; the pending event must survive and deliver
-	// exactly once on the next run without creating a second Down.
-	rec := &webhookRecorder{nextCodes: []int{500, 500, 200, 200}}
-	hook := httptest.NewServer(rec.handler())
+	// Fail every delivery with a retryable 500 until the test flips the
+	// flag. The first run must leave the Down pending (exit 4); the next
+	// run must deliver it exactly once without creating a second Down.
+	var failOpen atomic.Bool
+	failOpen.Store(true)
+	rec := &webhookRecorder{}
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		rec.mu.Lock()
+		rec.bodies = append(rec.bodies, string(body))
+		rec.auth = append(rec.auth, r.Header.Get("Authorization"))
+		rec.idem = append(rec.idem, r.Header.Get("Idempotency-Key"))
+		fail := failOpen.Load()
+		rec.mu.Unlock()
+		rec.calls.Add(1)
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
 	defer hook.Close()
 
 	dir := t.TempDir()
 	path := writeConfig(t, dir, baseConfig("abouei.db", backend.URL, hook.URL+"/hook", 1, 1))
 	ctx := context.Background()
 
-	if code, stdout, _ := runCheck(t, ctx, path); code != cli.ExitNotificationFailure {
-		t.Fatalf("first check exit = %d, want %d\n%s", code, cli.ExitNotificationFailure, stdout)
+	code, firstOut, _ := runCheck(t, ctx, path)
+	if code != cli.ExitNotificationFailure {
+		t.Fatalf("first check exit = %d, want %d\n%s", code, cli.ExitNotificationFailure, firstOut)
+	}
+
+	// Backend still failing: the incident is already open, so opening the
+	// webhook lets the second run deliver the pending Down instead of
+	// creating a new one. The failed attempt scheduled the retry with a
+	// bounded backoff (cap 100ms in this config); wait past it so the
+	// event is deterministically due instead of racing the clock.
+	failOpen.Store(false)
+	time.Sleep(500 * time.Millisecond)
+	bodiesMid, _, _, _ := rec.snapshot()
+	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+		t.Fatalf("second check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	bodies, _, _, _ := rec.snapshot()
-	// Attempts happened, but nothing asserts success yet.
-
-	// Backend still failing: incident already open, so the second run only
-	// retries the pending Down instead of creating a new one.
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitSuccess && code != cli.ExitUnhealthy {
-		t.Fatalf("second check exit = %d, want 0 or 1", code)
-	}
-	bodies, _, _, _ = rec.snapshot()
+	kinds := kindsOf(t, bodies)
 	downCount := 0
-	for _, k := range kindsOf(t, bodies) {
+	for _, k := range kinds {
 		if k == "incident.opened" {
 			downCount++
 		}
 	}
-	if downCount != len(bodies) {
-		t.Fatalf("events = %v, want only down deliveries (no duplicates of other kinds)", kindsOf(t, bodies))
+	beforeDown := 0
+	for _, k := range kindsOf(t, bodiesMid) {
+		if k == "incident.opened" {
+			beforeDown++
+		}
+	}
+	if downCount-beforeDown != 1 {
+		t.Fatalf("events = %v, want exactly one new Down delivery", kinds)
 	}
 
 	// Third run: steady failing state, no further deliveries once the
@@ -276,8 +305,7 @@ func TestTransientWebhookFailureDeliveredOnceAcrossRestart(t *testing.T) {
 	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
 		t.Fatalf("third check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
-	after, _, _, _ := rec.snapshot()
-	if len(after) != before {
+	if after, _, _, _ := rec.snapshot(); len(after) != before {
 		t.Fatalf("deliveries grew from %d to %d after acknowledgement", before, len(after))
 	}
 }
