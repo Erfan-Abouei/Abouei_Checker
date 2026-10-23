@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phase 3; `version`, `init`, `validate`, `check`, and `monitor` implemented; root help and global flags implemented |
+| Status | Phase 5; `version`, `init`, `validate`, `check`, `monitor`, `status`, and `history` implemented; root help and global flags implemented |
 | Executable | `abouei-checker` |
 | Related | [Requirements](requirements.md), [Configuration](configuration.md), [Incident lifecycle](incident-lifecycle.md) |
 
@@ -19,8 +19,8 @@ not be advertised as usable.
 | `validate` | Implemented | Load, resolve, and validate configuration without network or database access |
 | `check` | Implemented (Phase 4, durable) | Probe each selected backend once, persist state, attempt due notifications, and exit |
 | `monitor` | Implemented (Phase 4, durable) | Continuously schedule probes and notifications until graceful shutdown |
-| `status` | Planned | Read current backend and incident state from SQLite |
-| `history` | Planned | Read observations and incident transitions from SQLite |
+| `status` | Implemented (Phase 5, read-only) | Read current backend and incident state from SQLite |
+| `history` | Implemented (Phase 5, read-only) | Read observations and incident transitions from SQLite |
 | root/help | Implemented | Show command help |
 
 Running the root command with no arguments prints help and exits `0`. Running an
@@ -175,40 +175,64 @@ abouei-checker monitor [--config PATH] [--output text|json]
   line) with `data.kind` of `started`, `probe`, or `shutdown`. Human mode
   prints readable lifecycle events.
 
-### 3.6 `status` (planned)
+### 3.6 `status` (implemented in Phase 5)
 
 ```text
 abouei-checker status [--backend ID] [--config PATH] [--output text|json]
 ```
 
 - Reads configuration to locate the database and display backend names, then
-  reads persisted state. It does not probe or mutate incident state.
+  opens SQLite read-only and renders the persisted state. It does not probe,
+  create the database, run migrations, reset delivery claims, or mutate
+  incident state in any way. A write attempt fails loudly through the
+  read-only handle instead of mutating data.
 - Shows current health (`healthy`, `down`, `unknown`, or `orphaned`), last
-  observation time, consecutive failure/recovery counts, and open incident
-  details.
+  observation time, last status code, consecutive failure/recovery counts, and
+  the open incident link (`open_incident_id`, `opened_at`) where present.
+  A backend with a streak row but no observation yet reports `unknown`;
+  streak counts are still shown so pending failures stay honest.
 - `orphaned` means an open incident exists for a backend ID no longer present in
-  configuration. Such incidents are not probed, reminded, or auto-closed.
+  configuration. Orphaned incidents are listed after configured backends; they
+  are not probed, reminded, auto-closed, or counted as healthy.
+- `--backend` selects one backend ID exactly. An unknown ID is a usage error
+  (exit `2`).
+- Reports `open_incidents` for the selected scope (all backends, or the single
+  filtered backend), plus `pending_notifications` (pending/delivering/failed
+  rows) and `failed_notifications` (failed rows). Filtered counts cover only
+  the selected backend.
 - Exit: `0` no open incidents; `1` at least one open incident; `2` config/usage
-  error; `3` database error.
+  error; `3` database error (a missing database fails with a hint to run
+  `check` or `monitor` first).
 - Because it is read-only, `status` may show state that is stale relative to the
   real endpoint until the next `check` or `monitor`.
 
-### 3.7 `history` (planned)
+### 3.7 `history` (implemented in Phase 5)
 
 ```text
 abouei-checker history [--backend ID] [--since TIME] [--limit N]
                        [--config PATH] [--output text|json]
 ```
 
-- Reads persisted observations and incident events from SQLite. It does not
-  probe or mutate state.
-- `--backend` filters by exact stable backend ID.
+- Reads persisted observations and incident notification events from SQLite
+  through a read-only handle. It does not probe or mutate state.
+- `--backend` filters by exact stable backend ID. Unknown IDs return empty
+  results, not an error, because history outlives configuration removal.
 - `--since` accepts an RFC3339 timestamp or a Go duration interpreted backwards
-  from now (for example `24h`). Invalid input is a usage error.
-- `--limit` defaults to `50`; allowed range `1..1000`. Results are newest first.
-- The JSON result reports `has_more`. v1 has no cursor; callers increase the
+  from now (for example `24h`). Invalid input, including negative durations,
+  is a usage error.
+- `--limit` defaults to `50`; allowed range `1..1000` (out-of-range values are
+  usage errors). The limit bounds each list — observations and incident events —
+  independently. Results are newest first with a deterministic tie-break
+  (timestamp, then unique row identity), so equal timestamps never shuffle
+  pagination.
+- The JSON result reports `has_more`, true when either list was truncated.
+  v1 has no cursor; callers increase the
   limit or narrow the time range.
-- Exit: `0` success; `2` config/usage error; `3` database error.
+- Incident entries carry `sequence` and delivery `status` in addition to the
+  identity fields below, so failed and retrying notifications stay visible.
+- Exit: `0` success; `2` config/usage error; `3` database error (a missing
+  database fails with a hint to run `check` or `monitor` first). Empty history
+  is a valid `0` result, not an error.
 
 ## 4. One-Shot vs Continuous Behavior
 
@@ -396,9 +420,15 @@ Error object:
       "opened_at": "2026-10-22T11:58:00Z"
     }
   ],
-  "open_incidents": 1
+  "open_incidents": 1,
+  "pending_notifications": 1,
+  "failed_notifications": 0
 }
 ```
+
+`status` values for `status` are `healthy`, `down`, `unknown`, and `orphaned`.
+`last_observed_at`, `last_status_code`, `open_incident_id`, and `opened_at`
+are omitted when unknown rather than invented.
 
 `history`:
 
@@ -420,12 +450,17 @@ Error object:
       "incident_id": "7c2c...",
       "backend_id": "api",
       "event_type": "incident.opened",
+      "sequence": 1,
+      "status": "delivered",
       "occurred_at": "2026-10-22T11:58:00Z"
     }
   ],
   "has_more": false
 }
 ```
+
+`sequence` and delivery `status` are additive Phase 5 fields that keep failed
+and retrying notifications visible; the identity fields above are unchanged.
 
 ### 6.3 Streaming JSON
 
@@ -485,17 +520,21 @@ values or fields may be added without changing the envelope.
 
 ## 9. Current Implementation Limitations
 
-Phase 4 implements durable `check` and `monitor` on top of the Phase 3
-foundation: SQLite persistence with migration 1 (`backend_state`, `incidents`,
-`observations`, `notification_events`), the `internal/incident` state machine,
-the `internal/store` transaction boundary, and the `internal/notify` outbox
-worker with bounded retries. Threshold streaks, incidents, and notification
-intent persist across restarts.
+Phase 5 implements the operational read path and data management on top of the
+Phase 4 foundation: `status` and `history` open SQLite read-only (`mode=ro`,
+no migration, no delivery-claim reset) and never probe; retention deletes
+only expired terminal rows in bounded batches, runs on startup for writable
+commands and at most every 24 hours during `monitor`, and never deletes open
+incidents, pending/delivering/failed events, or backend state. Threshold
+streaks, incidents, notification intent, and history survive restarts; stale
+`delivering` rows reset to `pending` on writable open with the same event ID.
 
-The operational commands `status` and `history` remain planned (Phase 5).
-Retention and backup guidance are Phase 5 work; Phase 4 never deletes
-terminal or non-terminal rows.
-full incident and notification behavior arrives in Phase 4.
+No destructive repair exists: corrupt, inconsistent, or newer-schema databases
+fail closed with upgrade guidance, and a missing database fails `status` and
+`history` with a hint to run `check` or `monitor` first. There is no database
+reset or unconditional vacuum. A future `backup` command remains deferred;
+operators use SQLite online backup or `VACUUM INTO`, or copy the files while
+the process is stopped.
 
 The roadmap mentions a possible `--version` convenience flag. The CLI contract
 defines the `version` command as the build-metadata interface, so it does not add

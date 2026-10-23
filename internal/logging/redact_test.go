@@ -269,3 +269,24 @@ func TestRedactErrorUsesCauseTextWhenUnclassified(t *testing.T) {
 		t.Errorf("RedactError() = %q, leaked secret", got)
 	}
 }
+
+func TestOperationalCountFieldsAreEmitted(t *testing.T) {
+	t.Parallel()
+
+	// Phase 5 status/history/retention logs use numeric count fields. They
+	// must be emitted, not redacted, while unknown fields still fail closed.
+	redactor := NewRedactor()
+	for _, key := range []string{
+		"open_incidents", "observation_count", "event_count",
+		"observations_deleted", "events_deleted", "incidents_deleted",
+	} {
+		attr := redactor.ReplaceAttr(nil, slog.Int(key, 3))
+		if attr.Value.Kind() == slog.KindString && attr.Value.String() == redactedValue {
+			t.Errorf("%s was redacted, want the count emitted", key)
+		}
+	}
+	unknown := redactor.ReplaceAttr(nil, slog.String("webhook_url", "https://example.com/hook"))
+	if unknown.Value.String() != redactedValue {
+		t.Errorf("unknown field = %v, want %q", unknown.Value, redactedValue)
+	}
+}

@@ -127,6 +127,10 @@ func (a *App) Check(ctx context.Context, backendIDs []string) ([]CheckResult, Ch
 		return nil, CheckSummary{}, err
 	}
 
+	// Best-effort retention on startup: expired terminal rows are removed
+	// before new results land. Failures only log; see runRetention.
+	a.runRetention(ctx, db)
+
 	prober := probe.New()
 	defer prober.CloseIdleConnections()
 

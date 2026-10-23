@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Phases 0–3 complete; Phase 4 implemented and locally verified; Phases 5–7 pending |
+| Status | Phases 0–4 complete; Phase 5 implemented and locally verified; Phases 6–7 pending |
 | Related | [Requirements](requirements.md), [Testing](testing-and-quality.md), [Release checklist](release-checklist.md) |
 
 The phases below are the approved implementation sequence. Each phase has an
@@ -255,6 +255,10 @@ generic webhook payloads, delivery retries, reminders, and duplicate prevention.
 
 ## 7. Phase 5 — History, Retention & Recovery Hardening
 
+**Status:** Implemented on `feature/phase-5-history-retention-recovery` with
+local verification; remote CI/CodeQL evidence recorded in the
+[Phase 5 completion report](phase-5-completion.md).
+
 ### Objective
 
 Complete persistence-facing commands and operational data management.
@@ -400,19 +404,17 @@ release.
 
 ## 12. Recommended Next Task
 
-**Phase 3 — Health Probe & Monitoring Engine.**
+**Phase 6 — Integration, Reliability & Security Validation.**
 
 Scope:
 
-- safe HTTP client with timeout, TLS verification, response limits, redirect
-  policy, header handling, and no implicit proxy;
-- accepted-status and `contains`/RE2 body matching evaluation;
-- normalized probe results and failure reasons;
-- per-backend scheduler with no overlapping probes;
-- global concurrency semaphore and cancellation;
-- `httptest` coverage for status, body, timeout, malformed response, oversized
-  body, redirect, and TLS failure cases.
+- end-to-end tests with the built binary, local HTTP servers, a fake webhook,
+  and temporary SQLite;
+- failure injection (DNS, refusal, timeout, TLS, malformed/oversized bodies,
+  webhook 4xx/429/5xx, retry exhaustion);
+- restart and crash-window simulations;
+- concurrency stress with `-race`;
+- redaction, resource-lifecycle, and graceful-shutdown verification.
 
-Phase 3 consumes the immutable configuration from `internal/config`; it does not
-reload or mutate YAML. Do not implement incidents, SQLite, notifications, or
-operational commands beyond the Phase 3 scope.
+Phase 6 consumes the Phase 5 `status`/`history` and retention behavior as
+test fixtures; it introduces no new persistence schema.
