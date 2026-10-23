@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/app"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/term"
 )
 
 func newMonitorCommand(state *commandState, stdout io.Writer) *cobra.Command {
@@ -44,6 +45,10 @@ rows remain durable for the next start.`,
 
 			writer := &lockedWriter{writer: stdout}
 			jsonMode := state.output == outputJSON
+			style := term.Plain()
+			if !jsonMode {
+				style = term.ForWriter(stdout)
+			}
 
 			if jsonMode {
 				started := envelope{
@@ -61,6 +66,10 @@ rows remain durable for the next start.`,
 				if writeErr := writeCompactJSON(writer, started); writeErr != nil {
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write monitor output", writeErr)
 				}
+			} else if style.Enabled {
+				if _, writeErr := fmt.Fprintf(writer, "%s %s\n", style.Wordmark(), style.Muted("monitoring "+fmt.Sprintf("%d", len(summary.BackendIDs))+" backends: "+joinIDs(summary.BackendIDs))); writeErr != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write monitor output", writeErr)
+				}
 			} else {
 				if _, writeErr := fmt.Fprintf(writer, "monitoring %d backends: %s\n", len(summary.BackendIDs), joinIDs(summary.BackendIDs)); writeErr != nil {
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write monitor output", writeErr)
@@ -71,6 +80,8 @@ rows remain durable for the next start.`,
 				OnEvent: func(event app.MonitorEvent) {
 					if jsonMode {
 						_ = writeCompactJSON(writer, monitorProbeEnvelope(event))
+					} else if style.Enabled {
+						_, _ = fmt.Fprintln(writer, formatMonitorLineStyled(event, style))
 					} else {
 						_, _ = fmt.Fprintln(writer, formatMonitorLine(event))
 					}
@@ -95,10 +106,8 @@ rows remain durable for the next start.`,
 				if writeErr := writeCompactJSON(writer, shutdown); writeErr != nil {
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write monitor output", writeErr)
 				}
-			} else {
-				if _, writeErr := fmt.Fprintln(writer, "monitor stopped"); writeErr != nil {
-					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write monitor output", writeErr)
-				}
+			} else if _, writeErr := fmt.Fprintln(writer, style.Muted("monitor stopped")); writeErr != nil {
+				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write monitor output", writeErr)
 			}
 			return nil
 		},
@@ -148,6 +157,36 @@ func formatMonitorLine(event app.MonitorEvent) string {
 	}
 	return fmt.Sprintf("%s: %s: %s [streak %d/%d]%s",
 		event.BackendID, status, detail,
+		event.ConsecutiveFailures, event.FailureThreshold, incident)
+}
+
+func formatMonitorLineStyled(event app.MonitorEvent, style term.Style) string {
+	id := style.Bold(style.Fit(event.BackendID, 48))
+	incident := style.IncidentTag(event.IncidentStatus)
+	if event.IncidentStatus == "none" {
+		incident = ""
+	}
+	if event.Healthy {
+		status := style.Status("healthy")
+		if event.HTTPStatus != 0 {
+			return fmt.Sprintf("%s: %s (%d in %dms) [streak %d/%d]%s",
+				id, status, event.HTTPStatus, event.DurationMs,
+				event.ConsecutiveFailures, event.FailureThreshold, incident)
+		}
+		return fmt.Sprintf("%s: %s (in %dms)%s", id, status, event.DurationMs, incident)
+	}
+	detail := style.Fit(event.Error, 120)
+	if detail == "" {
+		detail = event.Outcome
+	}
+	status := style.Status(event.Outcome)
+	if event.HTTPStatus != 0 {
+		return fmt.Sprintf("%s: %s (%d in %dms): %s [streak %d/%d]%s",
+			id, status, event.HTTPStatus, event.DurationMs,
+			detail, event.ConsecutiveFailures, event.FailureThreshold, incident)
+	}
+	return fmt.Sprintf("%s: %s: %s [streak %d/%d]%s",
+		id, status, detail,
 		event.ConsecutiveFailures, event.FailureThreshold, incident)
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/app"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/term"
 )
 
 func newHistoryCommand(state *commandState, stdout io.Writer) *cobra.Command {
@@ -107,36 +108,102 @@ func parseHistorySince(raw string, now time.Time) (time.Time, error) {
 }
 
 func writeHistoryText(w io.Writer, report app.HistoryReport) error {
-	if _, err := fmt.Fprintln(w, "Observations:"); err != nil {
+	style := term.ForWriter(w)
+	if !style.Enabled {
+		if _, err := fmt.Fprintln(w, "Observations:"); err != nil {
+			return err
+		}
+		for _, observation := range report.Observations {
+			if _, err := fmt.Fprintln(w, "  "+formatHistoryObservation(observation)); err != nil {
+				return err
+			}
+		}
+		if len(report.Observations) == 0 {
+			if _, err := fmt.Fprintln(w, "  (none)"); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w, "Incidents:"); err != nil {
+			return err
+		}
+		for _, event := range report.Events {
+			if _, err := fmt.Fprintln(w, "  "+formatHistoryEvent(event)); err != nil {
+				return err
+			}
+		}
+		if len(report.Events) == 0 {
+			if _, err := fmt.Fprintln(w, "  (none)"); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(w, "has_more: %v\n", report.HasMore); err != nil {
+			return err
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, style.SectionTitle("Observations:")); err != nil {
 		return err
 	}
 	for _, observation := range report.Observations {
-		if _, err := fmt.Fprintln(w, "  "+formatHistoryObservation(observation)); err != nil {
+		if _, err := fmt.Fprintln(w, "  "+formatHistoryObservationStyled(observation, style)); err != nil {
 			return err
 		}
 	}
 	if len(report.Observations) == 0 {
-		if _, err := fmt.Fprintln(w, "  (none)"); err != nil {
+		if _, err := fmt.Fprintln(w, style.Muted("  (none)")); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(w, "Incidents:"); err != nil {
+	if _, err := fmt.Fprintln(w, style.SectionTitle("Incidents:")); err != nil {
 		return err
 	}
 	for _, event := range report.Events {
-		if _, err := fmt.Fprintln(w, "  "+formatHistoryEvent(event)); err != nil {
+		if _, err := fmt.Fprintln(w, "  "+formatHistoryEventStyled(event, style)); err != nil {
 			return err
 		}
 	}
 	if len(report.Events) == 0 {
-		if _, err := fmt.Fprintln(w, "  (none)"); err != nil {
+		if _, err := fmt.Fprintln(w, style.Muted("  (none)")); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(w, "has_more: %v\n", report.HasMore); err != nil {
+	if _, err := fmt.Fprintf(w, "%s %v\n", style.Bold("has_more:"), report.HasMore); err != nil {
 		return err
 	}
 	return nil
+}
+
+// formatHistoryObservationStyled colors the outcome while truncating long
+// error text for narrow terminals.
+func formatHistoryObservationStyled(observation app.HistoryObservation, style term.Style) string {
+	status := "no status"
+	if observation.StatusCode != nil {
+		status = fmt.Sprintf("status %d", *observation.StatusCode)
+	}
+	detail := observation.Outcome
+	if observation.FailureReason != nil && *observation.FailureReason != "" {
+		detail = observation.Outcome + "/" + *observation.FailureReason
+	}
+	head := fmt.Sprintf("%s %s %s",
+		style.Muted(observation.ObservedAt.UTC().Format(time.RFC3339)),
+		style.Bold(style.Fit(observation.BackendID, 40)),
+		style.Status(detail))
+	if observation.Error != nil && *observation.Error != "" {
+		return fmt.Sprintf("%s %s: %s",
+			head, style.Muted("("+status+")"), style.Fit(*observation.Error, 120))
+	}
+	return fmt.Sprintf("%s %s", head, style.Muted("("+status+")"))
+}
+
+// formatHistoryEventStyled keeps the machine shape with a colored event type.
+func formatHistoryEventStyled(event app.HistoryIncidentEvent, style term.Style) string {
+	return fmt.Sprintf("%s %s %s seq=%d status=%s incident=%s",
+		style.Muted(event.OccurredAt.UTC().Format(time.RFC3339)),
+		style.Bold(style.Fit(event.BackendID, 40)),
+		style.Status(event.EventType),
+		event.Sequence,
+		style.Status(event.Status),
+		style.Fit(event.IncidentID, 40))
 }
 
 func formatHistoryObservation(observation app.HistoryObservation) string {

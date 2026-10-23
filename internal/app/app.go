@@ -102,6 +102,17 @@ func (a *App) Redactor() *logging.Redactor {
 	return a.redactor
 }
 
+// MuteLogs discards subsequent application logs. Fullscreen interactive
+// modes (such as the TUI) call it so per-probe log records cannot corrupt
+// the display. Probe outcomes remain available through MonitorEvent values,
+// and redaction boundaries are unchanged.
+func (a *App) MuteLogs() {
+	if a == nil {
+		return
+	}
+	a.logger = slog.New(slog.DiscardHandler)
+}
+
 // ConfigPath returns the accepted --config path. Use LoadConfig to read it.
 func (a *App) ConfigPath() string {
 	if a == nil {
