@@ -1,23 +1,33 @@
 # AboueiChecker
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/brand/logo/primary/logo-black-768.png" />
+  <img src="assets/brand/logo/primary/logo-white-768.png" alt="ABOUEI logo" width="120" />
+</picture>
+
+**ABOUEI — Backend Health Monitoring.**
+
 AboueiChecker (`abouei-checker`) is an open-source Go CLI for monitoring backend
 HTTP health endpoints, detecting outages and recoveries, keeping local SQLite
 history, and sending configurable generic webhook notifications.
 
-> **Project status: Phase 4 durable incidents, SQLite persistence, and webhook notifications complete.**
+> **Project status: durable incidents, SQLite persistence, webhook notifications,
+> read-only `status`/`history`, the interactive `tui` dashboard, Phase 6
+> integration evidence, and the npm distribution layer complete.**
 >
 > **Release status:** `main` intentionally contains no production release yet.
 > Active implementation and verification continue on the `develop` branch.
+> The `abouei-checker` npm name is reserved-ready (verified available) and
+> installable binaries will ship with the first `v0.6.0+` GitHub Release.
 >
-> `abouei-checker version`, `init`, `validate`, `check`, and `monitor`,
-> root/command help, global `--config`/`--log-level` flags, strict YAML
-> loading, defaults/inheritance, environment-reference resolution, validation,
-> structured logging, redaction, centralized exit-code mapping, the safe HTTP
-> probe engine, the per-backend scheduler, threshold-driven incidents, SQLite
-> persistence with migrations, and generic webhook notifications with durable
-> retries are implemented. `status`, `history`, retention, and backup guidance
-> are specified but **not yet available**. Do not use this repository
-> for production monitoring yet.
+> `abouei-checker version`, `init`, `validate`, `check`, `monitor`, `status`,
+> `history`, and `tui`, root/command help, global `--config`/`--log-level`
+> flags, strict YAML loading, defaults/inheritance, environment-reference
+> resolution, validation, structured logging, redaction, centralized exit-code
+> mapping, the safe HTTP probe engine, the per-backend scheduler,
+> threshold-driven incidents, SQLite persistence with migrations, and generic
+> webhook notifications with durable retries are implemented. Do not use this
+> repository for production monitoring yet.
 
 ## Why AboueiChecker
 
@@ -56,7 +66,8 @@ distributed observability system.
 | Structured logging and redaction foundation | Implemented |
 | Shared error categories and exit-code mapping | Implemented |
 | `check`, `monitor` (durable incidents + webhook delivery) | Implemented |
-| `status`, `history` | Planned — not available |
+| `status`, `history` (read-only SQLite views) | Implemented |
+| `tui` interactive live dashboard (TTY only) | Implemented |
 | HTTP probing and scheduling | Implemented |
 | Incidents, webhooks, retries | Implemented (generic webhook, at-least-once, bounded retries) |
 | SQLite persistence and migrations (migration 1) | Implemented |
@@ -71,15 +82,20 @@ The detailed behavior contracts are complete even where implementation is
 pending:
 
 - [Product requirements](docs/requirements.md)
-- [Architecture](docs/architecture.md)
+- [Architecture](docs/architecture.md) · [root overview](ARCHITECTURE.md)
 - [Configuration](docs/configuration.md)
 - [CLI contract](docs/cli-contract.md)
 - [Incident and notification lifecycle](docs/incident-lifecycle.md)
 - [Persistence and migrations](docs/persistence.md)
-- [Testing and quality](docs/testing-and-quality.md)
-- [Security](docs/security.md)
-- [Roadmap](docs/roadmap.md)
+- [Testing and quality](docs/testing-and-quality.md) · [testing guide](TESTING.md)
+- [Security](docs/security.md) · [security policy](SECURITY.md)
+- [Roadmap](docs/roadmap.md) · [public roadmap](ROADMAP.md)
 - [Release checklist](docs/release-checklist.md)
+- [Development guide](DEVELOPMENT.md)
+- [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md)
+- [Governance](GOVERNANCE.md) · [Maintainers](MAINTAINERS.md)
+- [Code of conduct](CODE_OF_CONDUCT.md) · [Changelog](CHANGELOG.md)
+- [npm distribution](npm/README.md)
 - [Phase 0 completion report](docs/phase-0-completion.md)
 - [Phase 1 completion report](docs/phase-1-completion.md)
 - [Phase 2 completion report](docs/phase-2-completion.md)
@@ -87,6 +103,22 @@ pending:
 - [Architecture decisions](docs/decisions/README.md)
 
 ## Installation (Current Phase)
+
+### npm (global install, once release artifacts exist)
+
+```sh
+npm install --global abouei-checker
+abouei-checker
+```
+
+The installed `abouei-checker` command opens the interactive TUI by default
+in a terminal and forwards every subcommand, flag, and exit code to the
+pinned Go binary (`tui`, `init`, `validate`, `check`, `monitor`, `status`,
+`history`, `version`, `--help`, `--version`). Platform support, checksums,
+and the download strategy are documented in [`npm/README.md`](npm/README.md).
+
+> Pre-release note: installable binaries appear once GitHub Release
+> `v0.6.0+` artifacts exist. Until then, install from source or Docker.
 
 ### From source
 
@@ -98,8 +130,10 @@ make build
 ./bin/abouei-checker version --output json
 ```
 
-Build metadata is injected from the current commit and UTC build time. `dev` is
-the default version for local builds.
+Build metadata (version from `VERSION`, commit, UTC build time) is injected
+via linker flags. Override with `make build VERSION=x.y.z` for release
+candidates; `VERSION` must match `npm/package.json` (enforced by
+`npm run check-versions`).
 
 ### Docker (version smoke test only)
 
@@ -126,6 +160,8 @@ There is no published image or binary release at this stage.
 Current commands:
 
 ```sh
+abouei-checker                 # TUI dashboard when interactive, guided help otherwise
+abouei-checker tui             # interactive dashboard (requires a TTY)
 abouei-checker version
 abouei-checker version --output json
 abouei-checker version --log-level debug
@@ -171,8 +207,9 @@ Command surface:
 | --- | --- |
 | `check [BACKEND_ID...]` | Implemented | Probe selected backends once, persist state, attempt due notifications, and exit |
 | `monitor` | Implemented | Run continuous scheduling, notifications, and graceful shutdown |
-| `status` | Planned (Phase 5) | Read current backend and incident state from SQLite |
-| `history` | Planned (Phase 5) | Read observations and incident transitions from SQLite |
+| `status` | Implemented | Read current backend and incident state from SQLite |
+| `history` | Implemented | Read observations and incident transitions from SQLite |
+| `tui` | Implemented | Open the interactive live dashboard (requires a TTY; see [TUI usage](docs/tui.md)) |
 
 The exact flags, output, and exit semantics are in the
 [CLI contract](docs/cli-contract.md).
@@ -271,9 +308,11 @@ docker run -d --name abouei-checker \
   abouei-checker:dev monitor
 ```
 
-This command is **not functional yet** because `monitor` and configuration
-loading are not implemented. The image's default command is `version` so the
-foundation can be smoke-tested safely. Backup and persistence details are in
+`monitor` is implemented: the command above starts continuous scheduling with
+graceful shutdown. The image's default command is `version` so the foundation
+can be smoke-tested safely. For interactive use on a terminal, run
+`abouei-checker tui` instead (see [TUI usage](docs/tui.md)). Backup and
+persistence details are in
 [docs/persistence.md](docs/persistence.md#9-docker-persistence).
 
 ## Development
