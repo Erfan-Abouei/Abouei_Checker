@@ -350,7 +350,7 @@ func TestHistoryTextAndFilters(t *testing.T) {
 		t.Errorf("stdout = %q, want the empty marker", stdout)
 	}
 
-	code, stdout, _ = executeForTest(t, "history", "--config", path, "--since", "1h")
+	code, _, _ = executeForTest(t, "history", "--config", path, "--since", "1h")
 	if code != ExitSuccess {
 		t.Fatalf("duration since exit = %d, want 0", code)
 	}

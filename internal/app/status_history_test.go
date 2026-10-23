@@ -588,6 +588,7 @@ func TestDatabaseFailuresSurfaced(t *testing.T) {
 		t.Fatal("corrupt database must fail history, not report success")
 	}
 	// The failed open must not have deleted or repaired the file.
+	//nolint:gosec // test-only read of a temp-dir database file.
 	content, err := os.ReadFile(dbPath)
 	if err != nil {
 		t.Fatalf("read: %v", err)

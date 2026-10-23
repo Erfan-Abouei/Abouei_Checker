@@ -714,6 +714,7 @@ func TestCorruptDatabaseFailsClosedWithoutOverwrite(t *testing.T) {
 		t.Fatal("read-only open of garbage must fail")
 	}
 	// Nothing repaired or deleted the file: it still holds the same bytes.
+	//nolint:gosec // test-only read of a temp-dir database file.
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -743,7 +744,7 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	}
 	var name string
 	err = store.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='nope'").Scan(&name)
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("partial migration table leaked: %q, %v", name, err)
 	}
 }
