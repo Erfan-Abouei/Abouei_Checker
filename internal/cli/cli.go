@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Erfan-Abouei/Abouei_Checker/internal/app"
+	"github.com/Erfan-Abouei/Abouei_Checker/internal/term"
 )
 
 const (
@@ -87,8 +88,10 @@ func newRootCommand(stdout, stderr io.Writer, newApp appFactory) (*cobra.Command
 
 	root := &cobra.Command{
 		Use:   commandName,
-		Short: "Monitor backend health endpoints and notify on incidents",
-		Long: `AboueiChecker periodically probes backend health endpoints, records
+		Short: "ABOUEI backend health monitoring",
+		Long: `ABOUEICHECKER — Backend Health Monitoring.
+
+AboueiChecker periodically probes backend health endpoints, records
 observations and incidents, and delivers configurable webhook notifications.
 
 The version, init, validate, check, monitor, status, and history commands are
@@ -98,9 +101,36 @@ state read-only.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Default experience: launch the interactive TUI when stdout
+			// and stdin are both terminals. In pipes, CI, JSON mode, or
+			// any non-interactive context, show help with guidance
+			// instead of taking over the screen.
+			if state.output == outputJSON {
+				if err := cmd.Help(); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write help output", err)
+				}
+				return nil
+			}
+			if isInteractive(stdout) {
+				if state.application == nil {
+					return app.NewError(app.CategoryInternal, app.CodeInternal, "application is not initialized")
+				}
+				if _, err := state.application.LoadConfig(); err != nil {
+					return err
+				}
+				state.application.MuteLogs()
+				if err := runDashboard(cmd.Context(), state.application); err != nil {
+					return err
+				}
+				return nil
+			}
 			if err := cmd.Help(); err != nil {
 				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write help output", err)
 			}
+			_, _ = fmt.Fprintln(
+				cmd.OutOrStdout(),
+				"\nTip: run without arguments in an interactive terminal to open the live dashboard (or run `abouei-checker tui` explicitly).",
+			)
 			return nil
 		},
 	}
@@ -167,14 +197,59 @@ state read-only.`,
 	root.AddCommand(newMonitorCommand(state, stdout))
 	root.AddCommand(newStatusCommand(state, stdout))
 	root.AddCommand(newHistoryCommand(state, stdout))
+	root.AddCommand(newTUICommand(state, stdout))
 	root.SetHelpCommand(newHelpCommand(root))
 	// Initialize Cobra's help and completion commands before Execute so the
 	// unknown-command pre-check can find them. Cobra also calls these during
 	// execution; repeated initialization is idempotent.
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
+	applyBrandHelp(root, state)
 
 	return root, state
+}
+
+// humanStyle returns the presentation style for human-readable output. JSON
+// mode always uses a plain style so no banner or ANSI leaks into machine
+// output; text mode detects TTY/NO_COLOR support from the writer.
+func humanStyle(state *commandState, stdout io.Writer) term.Style {
+	if state != nil && state.output == outputJSON {
+		return term.Plain()
+	}
+	return term.ForWriter(stdout)
+}
+
+// applyBrandHelp prepends the compact ABOUEI banner to every help screen.
+// Help is human-readable by definition, so the banner is shown even though
+// per-command output stays concise. JSON envelopes are untouched because
+// help never emits JSON.
+func applyBrandHelp(root *cobra.Command, state *commandState) {
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if !isJSONRequested(cmd) {
+			style := humanStyle(state, cmd.OutOrStdout())
+			// Plain (piped/test) mode prints the same banner without ANSI:
+			// recognizable, no escape sequences, and all "Usage:" markers
+			// stay intact for existing tests and scripts.
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), style.Banner()); err == nil {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), style.Rule())
+			}
+		}
+		defaultHelp(cmd, args)
+	})
+}
+
+// isJSONRequested reports whether --output json was passed anywhere on the
+// command line. Used only to keep help free of styling surprises in machine
+// mode; command RunE functions use the parsed state.output instead.
+func isJSONRequested(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if flag := cmd.Root().PersistentFlags().Lookup(flagOutput); flag != nil {
+		return flag.Value.String() == string(outputJSON)
+	}
+	return false
 }
 
 func newVersionCommand(state *commandState, stdout io.Writer) *cobra.Command {
@@ -213,16 +288,28 @@ defaults when it is not supplied.`,
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write JSON version output", err)
 				}
 			} else {
+				style := humanStyle(state, stdout)
+				// Branded version presentation: compact banner, the
+				// historical version line verbatim (keeps scripts/tests
+				// matching), and a muted product descriptor.
+				if _, err := fmt.Fprintln(stdout, style.Banner()); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write version output", err)
+				}
 				if _, err := fmt.Fprintf(
 					stdout,
-					"%s %s (commit %s, built %s, %s %s)\n",
-					commandName,
-					info.Version,
-					info.Commit,
-					info.BuildDate,
-					info.GoVersion,
-					info.Platform,
+					"%s\n",
+					style.Bold(term.VersionLineFallback(
+						commandName,
+						info.Version,
+						info.Commit,
+						info.BuildDate,
+						info.GoVersion,
+						info.Platform,
+					)),
 				); err != nil {
+					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write version output", err)
+				}
+				if _, err := fmt.Fprintln(stdout, style.Muted("Backend Health Monitoring · by Erfan Abouei")); err != nil {
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write version output", err)
 				}
 			}
@@ -281,16 +368,21 @@ configuration file.`,
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write JSON validate output", err)
 				}
 			} else {
+				style := humanStyle(state, stdout)
+				// Keep the historical first line verbatim; only the
+				// "configuration is valid" phrase carries success color in
+				// TTY mode, so plain output stays byte-identical.
 				if _, err := fmt.Fprintf(
 					stdout,
-					"configuration is valid (schema version %d, %d backends)\n",
+					"%s (schema version %d, %d backends)\n",
+					style.Success("configuration is valid"),
 					summary.Version,
 					len(summary.BackendIDs),
 				); err != nil {
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write validate output", err)
 				}
 				for _, id := range summary.BackendIDs {
-					if _, err := fmt.Fprintf(stdout, "  - %s\n", id); err != nil {
+					if _, err := fmt.Fprintf(stdout, "  %s %s\n", style.Muted("-"), style.Bold(style.Fit(id, 64))); err != nil {
 						return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write validate output", err)
 					}
 				}
@@ -362,7 +454,11 @@ platform supports them.`,
 			if overwritten {
 				verb = "overwrote"
 			}
-			if _, err := fmt.Fprintf(stdout, "%s %s\n", verb, path); err != nil {
+			style := humanStyle(state, stdout)
+			if _, err := fmt.Fprintf(stdout, "%s %s\n", style.Success(verb), style.Bold(style.Fit(path, 120))); err != nil {
+				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write init output", err)
+			}
+			if _, err := fmt.Fprintln(stdout, style.Muted("Next: edit the template, then run abouei-checker validate")); err != nil {
 				return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write init output", err)
 			}
 			return nil
@@ -410,24 +506,24 @@ func parseOutputFormat(raw string) (outputFormat, error) {
 }
 
 func reportError(err error, stdout, stderr io.Writer, state *commandState) int {
-	if _, alreadyWritten := asOutputWritten(err); alreadyWritten {
-		message := app.SafeMessage(err)
+	redact := func(message string) string {
 		if message == "" {
 			message = "internal error"
 		}
 		if state != nil && state.application != nil {
 			message = state.application.Redactor().RedactString(message)
 		}
-		_, _ = fmt.Fprintf(stderr, "Error: %s\n", message)
+		return message
+	}
+	// Errors are human-readable diagnostics on stderr: style only the
+	// "Error:" lead so the safe message stays greppable and redaction
+	// boundaries are unchanged. JSON mode still emits a pure envelope.
+	style := term.ForWriter(stderr)
+	if _, alreadyWritten := asOutputWritten(err); alreadyWritten {
+		_, _ = fmt.Fprintln(stderr, style.ErrorLine(redact(app.SafeMessage(err))))
 		return ExitCodeFor(err)
 	}
-	message := app.SafeMessage(err)
-	if message == "" {
-		message = "internal error"
-	}
-	if state != nil && state.application != nil {
-		message = state.application.Redactor().RedactString(message)
-	}
+	message := redact(app.SafeMessage(err))
 
 	if state != nil && state.output == outputJSON {
 		payload := envelope{
@@ -441,7 +537,7 @@ func reportError(err error, stdout, stderr io.Writer, state *commandState) int {
 		_ = writeJSON(stdout, payload)
 	}
 
-	_, _ = fmt.Fprintf(stderr, "Error: %s\n", message)
+	_, _ = fmt.Fprintln(stderr, style.ErrorLine(message))
 	return ExitCodeFor(err)
 }
 
