@@ -101,9 +101,16 @@ async function verifyChecksum(archivePath, checksumUrl) {
 
 function extract(archivePath, destDir, entry) {
   fs.mkdirSync(destDir, { recursive: true });
-  // The release archive contains exactly one file: the platform binary.
-  // Extract it under a fixed name so the launcher path is deterministic.
-  execFileSync('tar', ['-xzf', archivePath, '-C', destDir], { stdio: 'pipe' });
+  // The release archive must contain exactly one file: the platform binary,
+  // stored as a bare filename. Member names are validated before extraction
+  // so a malicious archive cannot write outside destDir via absolute paths
+  // or ".." segments (checksum verification authenticates the publisher,
+  // this check contains the blast radius of a compromised artifact).
+  const members = listMembers(archivePath);
+  if (members.length !== 1 || !isSafeMember(members[0])) {
+    throw new Error('unexpected archive contents; refusing to install');
+  }
+  execFileSync('tar', ['-xzf', archivePath, '-C', destDir, members[0]], { stdio: 'pipe' });
   const extracted = fs.readdirSync(destDir).filter((f) => f !== path.basename(archivePath));
   if (extracted.length !== 1) {
     throw new Error(`unexpected archive contents (${extracted.length} files); refusing to install`);
@@ -113,6 +120,27 @@ function extract(archivePath, destDir, entry) {
   if (process.platform !== 'win32') {
     fs.chmodSync(finalPath, 0o755);
   }
+}
+
+// listMembers returns raw archive member names without extracting.
+function listMembers(archivePath) {
+  const output = execFileSync('tar', ['-tzf', archivePath], { encoding: 'utf8', stdio: 'pipe' });
+  return String(output)
+    .split('\n')
+    .map((line) => line.trim().replace(/^\.\//, ''))
+    .filter((line) => line !== '' && line !== '.');
+}
+
+// isSafeMember accepts only bare filenames: no directories, no absolute
+// paths, no parent traversal.
+function isSafeMember(name) {
+  if (typeof name !== 'string' || name === '' || name === '.' || name === '..') {
+    return false;
+  }
+  if (path.isAbsolute(name) || path.win32.isAbsolute(name)) {
+    return false;
+  }
+  return !name.includes('/') && !name.includes('\\') && !name.includes('..');
 }
 
 async function install() {
@@ -154,4 +182,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { install, binariesDir, binaryPath, binaryName, packageVersion };
+module.exports = { install, binariesDir, binaryPath, binaryName, packageVersion, extract, isSafeMember };

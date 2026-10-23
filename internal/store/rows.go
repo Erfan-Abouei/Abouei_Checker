@@ -368,9 +368,10 @@ INSERT INTO backend_state
 VALUES (?, ?, 0, ?, ?, NULL, NULL, ?)`,
 			backendID, failures, first, outcome, nowMillis(now),
 		); err != nil {
-			// A concurrent reconciler may have inserted the row first;
-			// the state is ensured either way.
-			if isConcurrentCreation(err.Error()) {
+			// A concurrent reconciler may have inserted the row first
+			// ("UNIQUE constraint failed"); the state is ensured either
+			// way. Anything else is a genuine persistence failure.
+			if isConstraintError(err) {
 				created = false
 				return nil
 			}

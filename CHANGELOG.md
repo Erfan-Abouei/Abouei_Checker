@@ -7,7 +7,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 No public release exists yet. Entries below describe the pre-release
 implementation state on the `develop` branch.
 
-## [Unreleased]
+## [0.6.0] - 2026-10-23
+
+First public release candidate: Phase 6 integration evidence, npm
+distribution, and release automation.
 
 ### Added
 
@@ -23,15 +26,21 @@ implementation state on the `develop` branch.
   fullscreen UI in pipes, CI, or `--output json` mode.
 - npm distribution layer (`npm/`): global `abouei-checker` launcher that
   resolves a pinned versioned binary and forwards args, signals, and exit
-  codes.
+  codes. Release archives are SHA-256 verified; member validation rejects
+  traversal and unexpected layouts before extraction.
+- Manual release workflow (`.github/workflows/release.yml`): version/tag
+  guards, five platform builds with smoke tests, checksummed archives,
+  npm validation, readiness report. No automatic publishing.
 
 ### Fixed
 
 - Concurrent database initialization: overlapping processes racing fresh
   database creation (duplicate `CREATE TABLE`, torn version/table reads)
   now converge via schema adoption plus bounded retry instead of failing
-  with `database_unavailable`. Verified 0 failures in 80 concurrent runs.
-- Concurrent writes during reconciliation and result processing now use
+  with `database_unavailable`.
+- Concurrent startup reconciliation: racing streak-row inserts converge on
+  the existing row instead of surfacing unique-constraint errors.
+- Concurrent writes during reconciliation and result processing use
   bounded transient-error retry instead of surfacing lock errors.
 
 ### Changed
@@ -51,5 +60,5 @@ implementation state on the `develop` branch.
   `status`/`history`, retention, restart reconciliation, and the
   interactive TUI dashboard.
 
-[Unreleased]: https://github.com/Erfan-Abouei/Abouei_Checker/compare/main...develop
+[0.6.0]: https://github.com/Erfan-Abouei/Abouei_Checker/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Erfan-Abouei/Abouei_Checker/tree/develop

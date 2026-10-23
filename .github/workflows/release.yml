@@ -35,6 +35,24 @@ jobs:
             exit 1;
           }
 
+      - name: Confirm HEAD is the release tag
+        # Tag-first sequencing per docs/release-checklist.md: the owner
+        # creates (and, where configured, signs) tag v<version> after
+        # approval; the workflow only builds when the dispatched commit
+        # is exactly that tag. This keeps manual dispatch from building an
+        # arbitrary unreviewed commit.
+        run: |
+          git fetch --tags --force
+          tag="v${{ inputs.version }}"
+          git rev-parse --verify --quiet "refs/tags/${tag}" || {
+            echo "tag ${tag} does not exist; create it after owner approval first";
+            exit 1;
+          }
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "refs/tags/${tag}")" || {
+            echo "HEAD $(git rev-parse --short HEAD) is not tag ${tag}; dispatch the workflow from the tag";
+            exit 1;
+          }
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -85,30 +103,39 @@ jobs:
           VERSION: ${{ inputs.version }}
           COMMIT: ${{ github.sha }}
         run: |
-          export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          make build
-          ./bin/abouei-checker version
+          # Direct go build (not `make build`): windows-latest runners have no
+          # GNU make, and `make build` omits the .exe extension Windows needs
+          # to execute the smoke tests below. GOOS/GOARCH are set explicitly
+          # even though each runner matches its target.
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          MODULE="$(go list -m)"
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          echo "BIN_NAME=abouei-checker${EXT}" >> "$GITHUB_ENV"
+          mkdir -p bin
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" go build -trimpath \
+            -ldflags "-s -w \
+              -X ${MODULE}/internal/buildinfo.Version=${VERSION} \
+              -X ${MODULE}/internal/buildinfo.Commit=${COMMIT} \
+              -X ${MODULE}/internal/buildinfo.BuildDate=${BUILD_DATE}" \
+            -o "bin/abouei-checker${EXT}" \
+            ./cmd/abouei-checker
+          "./bin/abouei-checker${EXT}" version
 
       - name: Smoke test binary
         run: |
-          ./bin/abouei-checker version --output json | python3 -c "import json,sys; json.load(sys.stdin)"
-          ./bin/abouei-checker --help | grep -q "abouei-checker"
+          "./bin/${BIN_NAME}" version --output json | python3 -c "import json,sys; json.load(sys.stdin)"
+          "./bin/${BIN_NAME}" --help | grep -q "abouei-checker"
 
       - name: Archive with checksum
         shell: bash
         run: |
           mkdir -p dist
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            bin="abouei-checker.exe"
-            cp "bin/abouei-checker" "$bin" 2>/dev/null || cp "bin/abouei-checker.exe" "$bin"
-          else
-            bin="abouei-checker"
-            cp bin/abouei-checker "$bin"
-          fi
+          cp "bin/${BIN_NAME}" .
           archive="dist/abouei-checker_${{ inputs.version }}_${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
-          tar -czf "$archive" "$bin"
+          tar -czf "$archive" "${BIN_NAME}"
           (cd dist && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
-          rm -f "$bin"
+          rm -f "${BIN_NAME}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

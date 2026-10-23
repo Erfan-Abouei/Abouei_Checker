@@ -24,8 +24,11 @@ not be advertised as usable.
 | `tui` | Implemented (Phase 6, interactive) | Open the live fullscreen dashboard; requires a TTY, rejects `--output json` |
 | root/help | Implemented | Show command help |
 
-Running the root command with no arguments prints help and exits `0`. Running an
-unknown command or flag is a usage error and exits `2`.
+Running the root command with no arguments opens the interactive dashboard
+when both stdin and stdout are terminals (see `tui`); otherwise it prints
+help and exits `0`, plus a one-line hint pointing at the dashboard. With
+`--output json` the root command always prints help and never launches the
+dashboard. Running an unknown command or flag is a usage error and exits `2`.
 
 ## 2. Global Flags
 

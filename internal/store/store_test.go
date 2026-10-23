@@ -137,6 +137,39 @@ func TestConcurrentOpenFreshDatabase(t *testing.T) {
 	}
 }
 
+// TestConcurrentEnsureBackendState races streak-row creation the way
+// overlapping one-shot runs do at startup: the losers must converge on the
+// existing row (UNIQUE constraint) instead of failing.
+func TestConcurrentEnsureBackendState(t *testing.T) {
+	store := openTestStore(t)
+	const racers = 8
+	errs := make([]error, racers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = store.EnsureBackendState(context.Background(), "api", nil)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("racer %d: %v", i, err)
+		}
+	}
+	created, err := store.EnsureBackendState(context.Background(), "api", nil)
+	if err != nil {
+		t.Fatalf("re-ensure: %v", err)
+	}
+	if created {
+		t.Fatal("row must exist after the race")
+	}
+}
+
 func TestOpenSetsOwnerOnlyPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "abouei.db")
 	store, err := Open(path)

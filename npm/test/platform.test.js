@@ -64,6 +64,43 @@ test('launcher forwards args and exit codes via override binary', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('archive member validation rejects traversal and nesting', () => {
+  const { isSafeMember } = require('../lib/install');
+  assert.equal(isSafeMember('abouei-checker'), true);
+  assert.equal(isSafeMember('abouei-checker.exe'), true);
+  for (const evil of [
+    '',
+    '.',
+    '..',
+    '/etc/passwd',
+    'C:\\Windows\\evil.exe',
+    '../evil',
+    'sub/dir/binary',
+    'sub\\binary',
+    '....//evil',
+    './sub/binary',
+  ]) {
+    assert.equal(isSafeMember(evil), false, `${evil} must be rejected`);
+  }
+});
+
+test('extract refuses a traversal archive without writing outside', () => {
+  const { execFileSync } = require('child_process');
+  const { extract } = require('../lib/install');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'abouei-traversal-'));
+  const outside = path.join(dir, 'should-not-exist');
+  const evilDir = path.join(dir, 'src');
+  fs.mkdirSync(evilDir, { recursive: true });
+  fs.writeFileSync(path.join(evilDir, 'payload.txt'), 'pwned');
+  const archive = path.join(dir, 'evil.tar.gz');
+  execFileSync('tar', ['-czf', archive, '-C', evilDir, '--transform', 's/^payload.txt$/..\\/escape.txt/', 'payload.txt']);
+  const destDir = path.join(dir, 'dest');
+  assert.throws(() => extract(archive, destDir, { goos: 'linux', goarch: 'amd64', ext: '' }), /refusing to install/);
+  assert.equal(fs.existsSync(outside), false);
+  assert.equal(fs.existsSync(path.join(dir, 'escape.txt')), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('launcher fails clearly when the binary is missing', () => {
   const launcher = path.join(__dirname, '..', 'bin', 'abouei-checker.js');
   const result = spawnSync(process.execPath, [launcher, 'version'], {
