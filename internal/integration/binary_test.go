@@ -8,6 +8,7 @@ package integration
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,10 +29,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		os.Exit(1)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	out := filepath.Join(dir, "abouei-checker")
 	wd, _ := os.Getwd()
 	root := findModuleRoot(wd)
+	//nolint:gosec // test-only build of the repository's own module.
 	cmd := exec.Command("go", "build", "-o", out, "./cmd/abouei-checker")
 	cmd.Dir = root
 	if combined, err := cmd.CombinedOutput(); err != nil {
@@ -77,6 +79,7 @@ func buildBinaryOnce(t *testing.T) string {
 func runBinary(t *testing.T, dir string, args ...string) (int, string, string) {
 	t.Helper()
 	bin := buildBinaryOnce(t)
+	//nolint:gosec // test-only execution of the just-built repository binary with a controlled argv.
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
 	// Hermetic discovery: no ambient config or secrets leak in.
@@ -87,7 +90,8 @@ func runBinary(t *testing.T, dir string, args ...string) (int, string, string) {
 	err := cmd.Run()
 	code := 0
 	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
 			code = exit.ExitCode()
 		} else {
 			t.Fatalf("run binary: %v", err)

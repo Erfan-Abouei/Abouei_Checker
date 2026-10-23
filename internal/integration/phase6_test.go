@@ -84,7 +84,7 @@ func itoa(v int) string {
 	return string(d)
 }
 
-func runCheck(t *testing.T, ctx context.Context, configPath string, extra ...string) (int, string, string) {
+func runCheck(ctx context.Context, t *testing.T, configPath string, extra ...string) (int, string, string) {
 	t.Helper()
 	args := append([]string{"check", "--config", configPath, "--output", "json"}, extra...)
 	var stdout, stderr bytes.Buffer
@@ -171,7 +171,7 @@ func TestDownThenRecoveryAcrossRestarts(t *testing.T) {
 	ctx := context.Background()
 
 	// Sub-threshold: first failure opens nothing and delivers nothing.
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitUnhealthy {
 		t.Fatalf("first check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	if _, _, _, calls := rec.snapshot(); calls != 0 {
@@ -179,7 +179,7 @@ func TestDownThenRecoveryAcrossRestarts(t *testing.T) {
 	}
 
 	// Threshold reached: exactly one Down.
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitUnhealthy {
 		t.Fatalf("second check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	bodies, _, idem, calls := rec.snapshot()
@@ -195,7 +195,7 @@ func TestDownThenRecoveryAcrossRestarts(t *testing.T) {
 	}
 
 	// Repeated failures: no duplicate Down.
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitUnhealthy {
 		t.Fatalf("third check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	if _, _, _, calls := rec.snapshot(); calls != 1 {
@@ -204,7 +204,7 @@ func TestDownThenRecoveryAcrossRestarts(t *testing.T) {
 
 	// Recovery: backend healthy, exactly one Recovery.
 	failing.Store(false)
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitSuccess {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitSuccess {
 		t.Fatalf("recovery check exit = %d, want %d", code, cli.ExitSuccess)
 	}
 	bodies, _, idem, calls = rec.snapshot()
@@ -224,7 +224,7 @@ func TestDownThenRecoveryAcrossRestarts(t *testing.T) {
 	}
 
 	// Steady state: further healthy checks deliver nothing.
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitSuccess {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitSuccess {
 		t.Fatalf("steady check exit = %d, want %d", code, cli.ExitSuccess)
 	}
 	if _, _, _, calls := rec.snapshot(); calls != 2 {
@@ -265,7 +265,7 @@ func TestTransientWebhookFailureDeliveredOnceAcrossRestart(t *testing.T) {
 	path := writeConfig(t, dir, baseConfig("abouei.db", backend.URL, hook.URL+"/hook", 1, 1))
 	ctx := context.Background()
 
-	code, firstOut, _ := runCheck(t, ctx, path)
+	code, firstOut, _ := runCheck(ctx, t, path)
 	if code != cli.ExitNotificationFailure {
 		t.Fatalf("first check exit = %d, want %d\n%s", code, cli.ExitNotificationFailure, firstOut)
 	}
@@ -278,7 +278,7 @@ func TestTransientWebhookFailureDeliveredOnceAcrossRestart(t *testing.T) {
 	failOpen.Store(false)
 	time.Sleep(500 * time.Millisecond)
 	bodiesMid, _, _, _ := rec.snapshot()
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitUnhealthy {
 		t.Fatalf("second check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	bodies, _, _, _ := rec.snapshot()
@@ -302,7 +302,7 @@ func TestTransientWebhookFailureDeliveredOnceAcrossRestart(t *testing.T) {
 	// Third run: steady failing state, no further deliveries once the
 	// pending event is acknowledged.
 	before := len(bodies)
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitUnhealthy {
 		t.Fatalf("third check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	if after, _, _, _ := rec.snapshot(); len(after) != before {
@@ -324,14 +324,14 @@ func TestPermanentWebhookFailureIsDeadLetter(t *testing.T) {
 	path := writeConfig(t, dir, baseConfig("abouei.db", backend.URL, hook.URL+"/hook", 1, 1))
 	ctx := context.Background()
 
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitNotificationFailure {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitNotificationFailure {
 		t.Fatalf("first check exit = %d, want %d", code, cli.ExitNotificationFailure)
 	}
 	firstCalls := func() int64 { _, _, _, c := rec.snapshot(); return c }()
 
 	// A permanent 400 must not be retried forever: the next run keeps the
 	// incident open without new delivery attempts for the same event.
-	if code, _, _ := runCheck(t, ctx, path); code != cli.ExitUnhealthy {
+	if code, _, _ := runCheck(ctx, t, path); code != cli.ExitUnhealthy {
 		t.Fatalf("second check exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
 	if _, _, _, calls := rec.snapshot(); calls != firstCalls {
@@ -355,7 +355,7 @@ func TestFailureInjectionMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen for malformed server: %v", err)
 	}
-	defer malformedListener.Close()
+	defer func() { _ = malformedListener.Close() }()
 	go func() {
 		for {
 			conn, err := malformedListener.Accept()
@@ -409,7 +409,7 @@ backends:
 			}
 			dir := t.TempDir()
 			path := writeConfig(t, dir, cfg)
-			code, stdout, stderr := runCheck(t, context.Background(), path)
+			code, stdout, stderr := runCheck(context.Background(), t, path)
 			if code != cli.ExitUnhealthy {
 				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", code, cli.ExitUnhealthy, stdout, stderr)
 			}
@@ -484,7 +484,7 @@ backends:
 `
 	dir := t.TempDir()
 	path := writeConfig(t, dir, cfg)
-	code, stdout, _ := runCheck(t, context.Background(), path)
+	code, stdout, _ := runCheck(context.Background(), t, path)
 	if code != cli.ExitUnhealthy {
 		t.Fatalf("exit = %d, want %d", code, cli.ExitUnhealthy)
 	}
@@ -519,7 +519,7 @@ func TestInvalidConfigFailsBeforeMonitoring(t *testing.T) {
 
 	dir := t.TempDir()
 	path := writeConfig(t, dir, "version: 1\nbackends:\n  - id: bad one!\n    url: "+backend.URL+"\n")
-	code, stdout, stderr := runCheck(t, context.Background(), path)
+	code, stdout, stderr := runCheck(context.Background(), t, path)
 	if code != cli.ExitUsage {
 		t.Fatalf("exit = %d, want %d", code, cli.ExitUsage)
 	}
