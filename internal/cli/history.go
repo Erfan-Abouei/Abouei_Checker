@@ -70,6 +70,13 @@ valid result, not an error.`,
 					return app.WrapError(app.CategoryInternal, app.CodeInternal, "failed to write history output", writeErr)
 				}
 			}
+			state.application.Logger().DebugContext(cmd.Context(), "history command completed",
+				"component", "cli",
+				"command", "history",
+				"operation", "history",
+				"observation_count", len(report.Observations),
+				"event_count", len(report.Events),
+			)
 			return nil
 		},
 	}

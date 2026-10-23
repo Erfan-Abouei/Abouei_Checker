@@ -53,6 +53,14 @@ the selected scope.`,
 				}
 			}
 
+			state.application.Logger().DebugContext(cmd.Context(), "status command completed",
+				"component", "cli",
+				"command", "status",
+				"operation", "status",
+				"backend_count", len(report.Backends),
+				"open_incidents", report.OpenIncidents,
+			)
+
 			if report.OpenIncidents > 0 {
 				return &outputWrittenError{err: app.WrapError(
 					app.CategoryUnhealthy,
