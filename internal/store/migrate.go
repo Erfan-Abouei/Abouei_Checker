@@ -126,10 +126,18 @@ func (s *Store) migrate() error {
 		}
 	}
 	if version == 0 && s.hasApplicationTables() {
-		return &OpenError{
-			Reason:  "schema_inconsistent",
-			Path:    s.path,
-			Message: "monitoring database has an unknown schema; refusing to migrate over it",
+		// A concurrent creator may commit between the version read above
+		// and the table check: re-read and adopt the freshly committed
+		// schema instead of crying corruption. Only a version that is
+		// still absent afterwards is genuinely inconsistent.
+		if current, verr := s.userVersion(); verr == nil && current > 0 {
+			version = current
+		} else {
+			return &OpenError{
+				Reason:  "schema_inconsistent",
+				Path:    s.path,
+				Message: "monitoring database has an unknown schema; refusing to migrate over it",
+			}
 		}
 	}
 	for _, step := range migrations {
@@ -137,6 +145,17 @@ func (s *Store) migrate() error {
 			continue
 		}
 		if err := s.applyMigration(step); err != nil {
+			// Concurrent creators race this DDL: both can observe
+			// version 0 and attempt the same CREATE TABLE. When the
+			// loser re-reads and finds the winner's committed schema,
+			// it adopts that version instead of failing. A version
+			// that is still absent means a genuine migration defect,
+			// which fails closed below.
+			current, verr := s.userVersion()
+			if verr == nil && current >= step.version {
+				version = current
+				continue
+			}
 			return err
 		}
 		version = step.version

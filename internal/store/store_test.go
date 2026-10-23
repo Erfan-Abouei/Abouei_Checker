@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,6 +91,50 @@ func TestOpenIsIdempotent(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	_ = second.Close()
+}
+
+// TestConcurrentOpenFreshDatabase races several Open calls on the same
+// fresh path, reproducing overlapping one-shot runs (or cron colliding
+// with a first start). Every opener must converge on the migrated schema
+// instead of failing with creation conflicts.
+func TestConcurrentOpenFreshDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "race.db")
+	const openers = 8
+	errs := make([]error, openers)
+	stores := make([]*Store, openers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			store, err := Open(path)
+			stores[i], errs[i] = store, err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("opener %d: %v", i, err)
+		}
+		if stores[i] == nil {
+			t.Fatalf("opener %d returned no store and no error", i)
+		}
+		_ = stores[i].Close()
+	}
+	check, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen after race: %v", err)
+	}
+	defer func() { _ = check.Close() }()
+	if version, err := check.userVersion(); err != nil || version != SupportedSchemaVersion {
+		t.Fatalf("user_version = %d, %v", version, err)
+	}
+	if err := check.verifyTables(); err != nil {
+		t.Fatalf("verify after race: %v", err)
+	}
 }
 
 func TestOpenSetsOwnerOnlyPermissions(t *testing.T) {
