@@ -22,15 +22,15 @@ const (
 // fields are nil when the database holds no value; callers render those as
 // "unknown" instead of inventing defaults.
 type BackendStatus struct {
-	BackendID           string
-	Name                string
-	Status              string
-	LastObservedAt      *time.Time
-	LastStatusCode      *int
-	ConsecutiveFailures int
+	BackendID            string
+	Name                 string
+	Status               string
+	LastObservedAt       *time.Time
+	LastStatusCode       *int
+	ConsecutiveFailures  int
 	ConsecutiveSuccesses int
-	OpenIncidentID      *string
-	OpenedAt            *time.Time
+	OpenIncidentID       *string
+	OpenedAt             *time.Time
 }
 
 // StatusReport is the read-only operational snapshot for the status command.
@@ -121,7 +121,11 @@ func (a *App) Status(ctx context.Context, backendFilter string) (StatusReport, e
 			view.ConsecutiveSuccesses = state.ConsecutiveSuccesses
 			view.LastObservedAt = state.LastObservedAt
 			view.LastStatusCode = state.LastStatusCode
-			view.Status = StatusHealthy
+			// A streak row created by startup reconciliation carries no
+			// observation yet; report unknown instead of inventing health.
+			if state.LastObservedAt != nil {
+				view.Status = StatusHealthy
+			}
 		}
 		if incidentRow, ok := byID[backend.ID]; ok {
 			view.Status = StatusDown
