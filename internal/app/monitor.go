@@ -78,6 +78,9 @@ func (a *App) runMonitor(ctx context.Context, options MonitorOptions) error {
 		return err
 	}
 
+	// Best-effort retention on startup; failures only log.
+	a.runRetention(ctx, db)
+
 	prober := probe.New()
 	defer prober.CloseIdleConnections()
 
@@ -133,26 +136,40 @@ func (a *App) runMonitor(ctx context.Context, options MonitorOptions) error {
 		scheduler.Run(ctx)
 	}()
 
-	select {
-	case <-ctx.Done():
-		// Graceful shutdown: stop scheduling, wait for in-flight probes up
-		// to the configured timeout, then stop delivery and close. Pending
-		// outbox rows remain durable for the next start.
-		timer := time.NewTimer(shutdownTimeout)
-		defer timer.Stop()
+	// Rerun retention at most once per retentionInterval while the monitor
+	// is alive. The ticker is best-effort and never blocks shutdown.
+	retentionTicker := time.NewTicker(retentionInterval)
+	defer retentionTicker.Stop()
+
+	for {
 		select {
+		case <-ctx.Done():
+			// Graceful shutdown: stop scheduling, wait for in-flight probes up
+			// to the configured timeout, then stop delivery and close. Pending
+			// outbox rows remain durable for the next start.
+			timer := time.NewTimer(shutdownTimeout)
+			func() {
+				defer timer.Stop()
+				select {
+				case <-done:
+				case <-timer.C:
+				}
+			}()
+			a.logger.InfoContext(context.Background(), "monitor stopped",
+				"component", "monitor",
+				"command", "monitor",
+				"operation", "monitor_stop",
+				"backend_count", len(backends),
+			)
+			return nil
+		case <-retentionTicker.C:
+			// At most once per retentionInterval during continuous
+			// monitoring. Best-effort: failures only log inside
+			// runRetention.
+			a.runRetention(ctx, db)
 		case <-done:
-		case <-timer.C:
+			return nil
 		}
-		a.logger.InfoContext(context.Background(), "monitor stopped",
-			"component", "monitor",
-			"command", "monitor",
-			"operation", "monitor_stop",
-			"backend_count", len(backends),
-		)
-		return nil
-	case <-done:
-		return nil
 	}
 }
 
