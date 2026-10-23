@@ -1,0 +1,162 @@
+name: Release preparation
+
+# Manual only. This workflow assembles and verifies release artifacts; it
+# never creates tags, GitHub Releases, or npm publications on its own.
+# Publishing stays an explicit maintainer action (see docs/release-checklist.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without leading v (must match VERSION)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Version alignment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Confirm input matches VERSION
+        run: |
+          test "${{ inputs.version }}" = "$(cat VERSION)" || {
+            echo "input ${{ inputs.version }} != VERSION $(cat VERSION)";
+            exit 1;
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: npm/package.json
+
+      - name: Check npm version alignment
+        working-directory: npm
+        run: npm run check-versions
+
+  build:
+    name: Build and archive (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build versioned binary
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          make build
+          ./bin/abouei-checker version
+
+      - name: Smoke test binary
+        run: |
+          ./bin/abouei-checker version --output json | python3 -c "import json,sys; json.load(sys.stdin)"
+          ./bin/abouei-checker --help | grep -q "abouei-checker"
+
+      - name: Archive with checksum
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            bin="abouei-checker.exe"
+            cp "bin/abouei-checker" "$bin" 2>/dev/null || cp "bin/abouei-checker.exe" "$bin"
+          else
+            bin="abouei-checker"
+            cp bin/abouei-checker "$bin"
+          fi
+          archive="dist/abouei-checker_${{ inputs.version }}_${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          tar -czf "$archive" "$bin"
+          (cd dist && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
+          rm -f "$bin"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: abouei-checker_${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  npm-package:
+    name: npm package verification
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Run npm tests
+        working-directory: npm
+        env:
+          ABOUEI_CHECKER_SKIP_POSTINSTALL: "1"
+        run: npm test
+
+      - name: Validate package contents
+        working-directory: npm
+        run: npm pack --dry-run
+
+  report:
+    name: Release readiness report
+    needs: [build, npm-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summarize
+        run: |
+          {
+            echo "## Release preparation: ${{ inputs.version }}";
+            echo "";
+            echo "Artifacts assembled and checksums generated for all five targets.";
+            echo "npm package validated (tests + dry-run pack).";
+            echo "";
+            echo "Remaining manual steps (owner only): create tag \`v${{ inputs.version }}\`,";
+            echo "publish the GitHub Release with these artifacts, then \`npm publish\`.";
+            echo "See docs/release-checklist.md and npm/README.md.";
+          } >> "$GITHUB_STEP_SUMMARY"
