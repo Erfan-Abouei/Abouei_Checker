@@ -91,9 +91,10 @@ func newRootCommand(stdout, stderr io.Writer, newApp appFactory) (*cobra.Command
 		Long: `AboueiChecker periodically probes backend health endpoints, records
 observations and incidents, and delivers configurable webhook notifications.
 
-The version, init, validate, check, and monitor commands are implemented.
-check and monitor keep threshold state in memory only; SQLite persistence,
-incidents, and notifications arrive in later phases.`,
+The version, init, validate, check, monitor, status, and history commands are
+implemented. check and monitor persist threshold state, incidents, and
+notification intent in SQLite across restarts; status and history read that
+state read-only.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -164,6 +165,8 @@ incidents, and notifications arrive in later phases.`,
 	root.AddCommand(newInitCommand(state, stdout))
 	root.AddCommand(newCheckCommand(state, stdout))
 	root.AddCommand(newMonitorCommand(state, stdout))
+	root.AddCommand(newStatusCommand(state, stdout))
+	root.AddCommand(newHistoryCommand(state, stdout))
 	root.SetHelpCommand(newHelpCommand(root))
 	// Initialize Cobra's help and completion commands before Execute so the
 	// unknown-command pre-check can find them. Cobra also calls these during
